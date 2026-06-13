@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AMIC Contact Search</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <strong>AMIC Contact Search</strong>
+    <a class="logout" href="/logout">Sign out</a>
+  </header>
+
+  <main class="layout">
+    <form id="searchForm" class="panel">
+      <label>Search
+        <input type="text" id="q" name="q" placeholder="e.g. workforce development, CNC machining, apprenticeship…" autofocus>
+      </label>
+
+      <div class="row">
+        <label>State
+          <select id="state"><option value="">Any</option></select>
+        </label>
+        <label>Email status
+          <select id="email_status"><option value="">Any</option></select>
+        </label>
+      </div>
+
+      <label>Tags (match any)
+        <input type="text" id="tags" list="tagList" placeholder="type a tag, comma-separate for several">
+        <datalist id="tagList"></datalist>
+      </label>
+
+      <label>Source list
+        <select id="source"><option value="">Any</option></select>
+      </label>
+
+      <details>
+        <summary>Advanced</summary>
+        <label>Semantic vs keyword weight: <span id="swVal">0.7</span>
+          <input type="range" id="semantic_weight" min="0" max="1" step="0.1" value="0.7">
+        </label>
+        <label>Max results
+          <input type="number" id="limit" value="50" min="1" max="200">
+        </label>
+      </details>
+
+      <div class="actions">
+        <button type="submit">Search</button>
+        <button type="button" id="exportBtn" class="secondary">Export CSV</button>
+      </div>
+      <p class="hint">Tip: leave the search box empty to browse purely by filters.</p>
+    </form>
+
+    <section class="results">
+      <div id="status" class="muted">Enter a search to begin.</div>
+      <div class="tablewrap">
+        <table id="resultsTable" hidden>
+          <thead>
+            <tr>
+              <th>Score</th><th>Name</th><th>Title</th><th>Organization</th>
+              <th>Email</th><th>Phone</th><th>Location</th><th>Tags</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

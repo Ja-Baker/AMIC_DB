@@ -1,0 +1,9 @@
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+jinja2==3.1.4
+python-multipart==0.0.18
+itsdangerous==2.2.0
+psycopg[binary]==3.2.3
+psycopg_pool==3.2.4
+pgvector==0.3.6
+fastembed==0.4.2

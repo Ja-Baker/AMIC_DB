@@ -1,0 +1,9 @@
+# secrets — never commit
+.env
+
+# python / tooling
+.venv/
+__pycache__/
+*.pyc
+.fastembed_cache/
+.DS_Store
