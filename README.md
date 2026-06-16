@@ -64,7 +64,11 @@ set -a; . ./.env; set +a
 
 ## Using it
 - **Search box**: natural language — "workforce development", "CNC machining
-  apprenticeship", "robotics automation". Ranked by meaning + keywords.
+  apprenticeship", "robotics automation". Ranked by rank-fusion (RRF) of meaning
+  (vector) + exact keywords, so literal matches (a company name, an acronym) reliably
+  surface at the top instead of being buried under fuzzy semantic matches.
+- **Match column**: each row shows *why* it matched — `name` / `org` / `title` for an
+  exact text hit, or `related` when found by meaning only.
 - **Filters**: state, email status, tags (match any), source list. Leave the search
   box empty to browse purely by filters.
 - **POC**: each result row has an editable **POC** (AMIC point of contact) dropdown —

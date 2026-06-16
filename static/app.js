@@ -28,6 +28,13 @@ function dash(v) {
   return esc(v) || "<span class='muted'>—</span>";
 }
 
+function matchBadge(r) {
+  const mf = r.match_field;
+  if (!mf) return `<span class="match related" title="Found by meaning, not exact words">related</span>`;
+  const label = { name: "name", organization: "org", title: "title", notes: "notes" }[mf] || mf;
+  return `<span class="match exact" title="Exact match in ${esc(mf)}">${esc(label)}</span>`;
+}
+
 function pocSelect(r) {
   const opts = ['<option value="">—</option>']
     .concat(POC_CHOICES.map((p) =>
@@ -48,6 +55,7 @@ function render(rows) {
     const dnc = r.do_not_contact ? `<span class="dnc">do not contact</span>` : "";
     const tr = document.createElement("tr");
     tr.innerHTML = `
+      <td>${matchBadge(r)}</td>
       <td><strong>${dash(r.last_name)}</strong><div class="muted">${esc(r.contact_id)}</div></td>
       <td>${dash(r.first_name)}</td>
       <td>${dash(r.organization)}</td>
@@ -58,8 +66,7 @@ function render(rows) {
       <td><div class="tags">${tags}</div></td>
       <td class="muted">${esc(source)}</td>
       <td>${pocSelect(r)}</td>
-      <td>${dnc}</td>
-      <td class="score">${r.score?.toFixed ? r.score.toFixed(3) : esc(r.score)}</td>`;
+      <td>${dnc}</td>`;
     tbody.appendChild(tr);
   }
   $("resultsTable").hidden = rows.length === 0;

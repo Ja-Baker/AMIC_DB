@@ -86,8 +86,7 @@ def _run_search(q, tags, state, email_status, source, poc, include_dnc,
     sql = """
         select contact_id, last_name, first_name, full_name, organization, title,
                email, email_status, phone, linkedin, city, state, tags, source_lists,
-               poc, do_not_contact,
-               round(score::numeric, 3)::float as score
+               poc, do_not_contact, match_field
         from hybrid_search_contacts(
             query_embedding     => %(qe)s::vector,
             query_text          => %(q)s::text,
@@ -102,7 +101,7 @@ def _run_search(q, tags, state, email_status, source, poc, include_dnc,
     """
     cols = ["contact_id", "last_name", "first_name", "full_name", "organization",
             "title", "email", "email_status", "phone", "linkedin", "city", "state",
-            "tags", "source_lists", "poc", "do_not_contact", "score"]
+            "tags", "source_lists", "poc", "do_not_contact", "match_field"]
     with _pool.connection() as conn, conn.cursor() as cur:
         cur.execute(sql, params)
         rows = cur.fetchall()
@@ -216,7 +215,7 @@ async def api_export(request: Request):
                        limit=min(int(body.get("limit", 1000)), 2000))
     fields = ["contact_id", "last_name", "first_name", "full_name", "organization",
               "title", "email", "email_status", "phone", "linkedin", "city", "state",
-              "tags", "source_lists", "poc", "do_not_contact", "score"]
+              "tags", "source_lists", "poc", "do_not_contact"]
     buf = io.StringIO()
     w = csv.writer(buf)
     w.writerow(fields)
