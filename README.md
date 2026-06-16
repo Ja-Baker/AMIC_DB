@@ -67,5 +67,9 @@ set -a; . ./.env; set +a
   apprenticeship", "robotics automation". Ranked by meaning + keywords.
 - **Filters**: state, email status, tags (match any), source list. Leave the search
   box empty to browse purely by filters.
+- **POC**: each result row has an editable **POC** (AMIC point of contact) dropdown —
+  TH / KM / BW / DS. Picking one saves immediately to the database; pick the blank to
+  clear it. Filter by POC, or by "include do-not-contact", from the sidebar.
 - **Advanced**: semantic-vs-keyword weight slider, max results.
-- **Export CSV**: downloads the current result set for outreach.
+- **Export CSV**: downloads the current result set (last name, first name, organization,
+  title, contact details, source lists, POC, do-not-contact) for outreach.

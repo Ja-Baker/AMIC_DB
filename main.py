@@ -66,7 +66,11 @@ def _norm(v):
     return v or None
 
 
-def _run_search(q, tags, state, email_status, source, semantic_weight, limit):
+POC_CHOICES = ["TH", "KM", "BW", "DS"]  # Tracy Henke, Kory Mathews, Brandon Wegge, Doug Stuart
+
+
+def _run_search(q, tags, state, email_status, source, poc, include_dnc,
+                semantic_weight, limit):
     params = {
         "qe": _embed_query(q),
         "q": _norm(q),
@@ -74,12 +78,15 @@ def _run_search(q, tags, state, email_status, source, semantic_weight, limit):
         "state": _norm(state),
         "es": _norm(email_status),
         "src": _norm(source),
+        "poc": _norm(poc),
+        "dnc": bool(include_dnc),
         "sw": float(semantic_weight),
         "lim": int(limit),
     }
     sql = """
-        select contact_id, full_name, title, organization, email, email_status,
-               phone, linkedin, city, state, tags, source_lists,
+        select contact_id, last_name, first_name, full_name, organization, title,
+               email, email_status, phone, linkedin, city, state, tags, source_lists,
+               poc, do_not_contact,
                round(score::numeric, 3)::float as score
         from hybrid_search_contacts(
             query_embedding     => %(qe)s::vector,
@@ -88,16 +95,32 @@ def _run_search(q, tags, state, email_status, source, semantic_weight, limit):
             filter_state        => %(state)s::text,
             filter_email_status => %(es)s::text,
             filter_source       => %(src)s::text,
+            filter_poc          => %(poc)s::text,
+            include_dnc         => %(dnc)s::boolean,
             semantic_weight     => %(sw)s::real,
             match_count         => %(lim)s::int)
     """
-    cols = ["contact_id", "full_name", "title", "organization", "email",
-            "email_status", "phone", "linkedin", "city", "state", "tags",
-            "source_lists", "score"]
+    cols = ["contact_id", "last_name", "first_name", "full_name", "organization",
+            "title", "email", "email_status", "phone", "linkedin", "city", "state",
+            "tags", "source_lists", "poc", "do_not_contact", "score"]
     with _pool.connection() as conn, conn.cursor() as cur:
         cur.execute(sql, params)
         rows = cur.fetchall()
     return [dict(zip(cols, r)) for r in rows]
+
+
+def _search_args(body):
+    """Shared parameter parsing for /api/search and /api/export.csv."""
+    return dict(
+        q=body.get("q", ""),
+        tags=body.get("tags") or None,
+        state=body.get("state"),
+        email_status=body.get("email_status"),
+        source=body.get("source"),
+        poc=body.get("poc"),
+        include_dnc=bool(body.get("include_dnc")),
+        semantic_weight=body.get("semantic_weight", 0.7),
+    )
 
 
 # ---------------------------------------------------------------- auth / pages
@@ -149,7 +172,8 @@ def api_meta(request: Request):
                        group by s order by c desc, s""")
         sources = [r[0] for r in cur.fetchall()]
     return {"states": states, "tags": tags, "sources": sources,
-            "email_statuses": ["valid format", "missing", "check"]}
+            "email_statuses": ["valid format", "missing", "check"],
+            "poc_choices": POC_CHOICES}
 
 
 @app.post("/api/search")
@@ -157,16 +181,30 @@ async def api_search(request: Request):
     if not _authed(request):
         return JSONResponse({"error": "unauthorized"}, status_code=401)
     body = await request.json()
-    rows = _run_search(
-        q=body.get("q", ""),
-        tags=body.get("tags") or None,
-        state=body.get("state"),
-        email_status=body.get("email_status"),
-        source=body.get("source"),
-        semantic_weight=body.get("semantic_weight", 0.7),
-        limit=min(int(body.get("limit", 50)), 200),
-    )
+    rows = _run_search(**_search_args(body),
+                       limit=min(int(body.get("limit", 50)), 200))
     return {"count": len(rows), "results": rows}
+
+
+@app.post("/api/poc")
+async def api_set_poc(request: Request):
+    """Assign / clear a contact's POC. Editable inline from the results table."""
+    if not _authed(request):
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    body = await request.json()
+    contact_id = _norm(body.get("contact_id"))
+    poc = _norm(body.get("poc"))
+    if not contact_id:
+        return JSONResponse({"error": "missing contact_id"}, status_code=400)
+    if poc is not None and poc not in POC_CHOICES:
+        return JSONResponse({"error": "invalid poc"}, status_code=400)
+    with _pool.connection() as conn, conn.cursor() as cur:
+        cur.execute("update contacts set poc = %s where contact_id = %s",
+                    (poc, contact_id))
+        updated = cur.rowcount
+    if not updated:
+        return JSONResponse({"error": "unknown contact_id"}, status_code=404)
+    return {"ok": True, "contact_id": contact_id, "poc": poc}
 
 
 @app.post("/api/export.csv")
@@ -174,18 +212,11 @@ async def api_export(request: Request):
     if not _authed(request):
         return JSONResponse({"error": "unauthorized"}, status_code=401)
     body = await request.json()
-    rows = _run_search(
-        q=body.get("q", ""),
-        tags=body.get("tags") or None,
-        state=body.get("state"),
-        email_status=body.get("email_status"),
-        source=body.get("source"),
-        semantic_weight=body.get("semantic_weight", 0.7),
-        limit=min(int(body.get("limit", 1000)), 2000),
-    )
-    fields = ["contact_id", "full_name", "title", "organization", "email",
-              "email_status", "phone", "linkedin", "city", "state", "tags",
-              "source_lists", "score"]
+    rows = _run_search(**_search_args(body),
+                       limit=min(int(body.get("limit", 1000)), 2000))
+    fields = ["contact_id", "last_name", "first_name", "full_name", "organization",
+              "title", "email", "email_status", "phone", "linkedin", "city", "state",
+              "tags", "source_lists", "poc", "do_not_contact", "score"]
     buf = io.StringIO()
     w = csv.writer(buf)
     w.writerow(fields)
@@ -193,7 +224,8 @@ async def api_export(request: Request):
         row = dict(r)
         row["tags"] = "; ".join(row.get("tags") or [])
         row["source_lists"] = "; ".join(row.get("source_lists") or [])
-        w.writerow([row.get(f, "") for f in fields])
+        row["do_not_contact"] = "yes" if row.get("do_not_contact") else ""
+        w.writerow(["" if row.get(f) is None else row.get(f) for f in fields])
     # Prepend a UTF-8 BOM so Excel renders accents/emoji correctly.
     data = "﻿" + buf.getvalue()
     return StreamingResponse(
