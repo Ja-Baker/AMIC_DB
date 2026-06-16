@@ -1,18 +1,27 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="light">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>AMIC Contact Search — Sign in</title>
+  <link rel="icon" type="image/png" href="/static/img/amic-logo-color.png">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body class="login-body">
-  <form class="login-card" method="post" action="/login">
-    <h1>AMIC Contact Search</h1>
-    <p class="muted">Enter the access password to continue.</p>
-    {% if error %}<div class="error">{{ error }}</div>{% endif %}
-    <input type="password" name="password" placeholder="Password" autofocus required>
-    <button type="submit">Sign in</button>
-  </form>
+  <main class="login-card">
+    <img class="login-logo" src="/static/img/amic-logo-color.png"
+         alt="Advanced Manufacturing Innovation Center — St. Louis">
+    <h1>Contact Search</h1>
+    <p class="tagline">Find the right people. Build the list. <strong>Futures made.</strong></p>
+    {% if error %}<p class="banner error">{{ error }}</p>{% endif %}
+    <form method="post" action="/login">
+      <label for="password">Access password</label>
+      <input type="password" id="password" name="password"
+             placeholder="Enter password" autofocus required>
+      <button type="submit" class="btn-primary">Sign in</button>
+    </form>
+    <p class="login-foot">AMIC STL · internal tool</p>
+  </main>
 </body>
 </html>

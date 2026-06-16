@@ -1,159 +1,204 @@
 "use strict";
 
 const $ = (id) => document.getElementById(id);
-const tbody = document.querySelector("#resultsTable tbody");
 let POC_CHOICES = [];
+let table = null;
+const ts = {}; // Tom Select instances
+
+// ---------------------------------------------------------------- helpers
+function esc(s) {
+  return (s == null ? "" : String(s)).replace(/[&<>"]/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+}
+const dash = (v) => esc(v) || "<span class='muted'>—</span>";
+
+function singleVal(name) {
+  const v = ts[name] ? ts[name].getValue() : ($(name).value || "");
+  return v || null;
+}
 
 function gatherParams() {
-  const tags = $("tags").value.split(",").map((s) => s.trim()).filter(Boolean);
   return {
     q: $("q").value,
-    tags: tags.length ? tags : null,
-    state: $("state").value || null,
-    email_status: $("email_status").value || null,
-    source: $("source").value || null,
-    poc: $("poc").value || null,
+    tags: (ts.tags ? ts.tags.getValue() : []).length ? ts.tags.getValue() : null,
+    state: singleVal("state"),
+    email_status: singleVal("email_status"),
+    source: singleVal("source"),
+    poc: singleVal("poc"),
     include_dnc: $("include_dnc").checked,
     semantic_weight: parseFloat($("semantic_weight").value),
     limit: parseInt($("limit").value, 10) || 50,
   };
 }
 
-function esc(s) {
-  return (s == null ? "" : String(s)).replace(/[&<>"]/g, (c) =>
-    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
-}
-
-function dash(v) {
-  return esc(v) || "<span class='muted'>—</span>";
-}
-
-function matchBadge(r) {
-  const mf = r.match_field;
-  if (!mf) return `<span class="match related" title="Found by meaning, not exact words">related</span>`;
-  if (mf === "similar")
-    return `<span class="match similar" title="Close / typo match on name or organization">similar</span>`;
-  const label = { name: "name", organization: "org", title: "title",
-                  tags: "tag", city: "city", notes: "notes" }[mf] || mf;
+// ---------------------------------------------------------------- formatters
+function matchFmt(cell) {
+  const mf = cell.getValue();
+  if (!mf) return '<span class="match related" title="Found by meaning, not exact words">related</span>';
+  if (mf === "similar") return '<span class="match similar" title="Close / typo match">similar</span>';
+  const label = { name: "name", organization: "org", title: "title", tags: "tag", city: "city", notes: "notes" }[mf] || mf;
   return `<span class="match exact" title="Exact match in ${esc(mf)}">${esc(label)}</span>`;
 }
-
-function pocSelect(r) {
-  const opts = ['<option value="">—</option>']
-    .concat(POC_CHOICES.map((p) =>
-      `<option value="${esc(p)}"${p === r.poc ? " selected" : ""}>${esc(p)}</option>`))
-    .join("");
-  return `<select class="poc-select" data-id="${esc(r.contact_id)}">${opts}</select>`;
+function emailFmt(cell) {
+  const e = cell.getValue();
+  if (!e) return "<span class='muted'>—</span>";
+  const st = cell.getRow().getData().email_status || "";
+  return `<a class="email" href="mailto:${esc(e)}">${esc(e)}</a>` +
+         (st ? `<div class="muted sm">${esc(st)}</div>` : "");
+}
+function locFmt(cell) {
+  const d = cell.getRow().getData();
+  return dash([d.city, d.state].filter(Boolean).join(", "));
+}
+function tagsFmt(cell) {
+  const t = cell.getValue() || [];
+  return t.length ? `<div class="tags">${t.map((x) => `<span class="tag">${esc(x)}</span>`).join("")}</div>` : "<span class='muted'>—</span>";
+}
+function sourceFmt(cell) {
+  const s = cell.getValue() || [];
+  return s.length ? `<span class="muted sm">${esc(s.join("; "))}</span>` : "<span class='muted'>—</span>";
+}
+function dncFmt(cell) {
+  return cell.getValue() ? '<span class="dnc">do not contact</span>' : "";
 }
 
-function render(rows) {
-  tbody.innerHTML = "";
-  for (const r of rows) {
-    const loc = [r.city, r.state].filter(Boolean).join(", ");
-    const tags = (r.tags || []).map((t) => `<span class="tag">${esc(t)}</span>`).join("");
-    const source = (r.source_lists || []).join("; ");
-    const email = r.email
-      ? `<a class="email" href="mailto:${esc(r.email)}">${esc(r.email)}</a>`
-      : `<span class="muted">—</span>`;
-    const dnc = r.do_not_contact ? `<span class="dnc">do not contact</span>` : "";
-    const tr = document.createElement("tr");
-    tr.innerHTML = `
-      <td>${matchBadge(r)}</td>
-      <td><strong>${dash(r.last_name)}</strong><div class="muted">${esc(r.contact_id)}</div></td>
-      <td>${dash(r.first_name)}</td>
-      <td>${dash(r.organization)}</td>
-      <td>${dash(r.title)}</td>
-      <td>${email}<div class="muted">${esc(r.email_status || "")}</div></td>
-      <td>${dash(r.phone)}</td>
-      <td>${dash(loc)}</td>
-      <td><div class="tags">${tags}</div></td>
-      <td class="muted">${esc(source)}</td>
-      <td>${pocSelect(r)}</td>
-      <td>${dnc}</td>`;
-    tbody.appendChild(tr);
-  }
-  $("resultsTable").hidden = rows.length === 0;
-}
-
-async function savePoc(sel) {
-  const prev = sel.dataset.prev || "";
-  sel.disabled = true;
+// ---------------------------------------------------------------- POC save
+async function savePoc(cell) {
+  const id = cell.getRow().getData().contact_id;
+  const val = cell.getValue() || null;
   try {
     const res = await fetch("/api/poc", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ contact_id: sel.dataset.id, poc: sel.value || null }),
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ contact_id: id, poc: val }),
     });
     if (res.status === 401) { window.location = "/login"; return; }
     if (!res.ok) throw new Error("save failed");
-    sel.dataset.prev = sel.value;
-    sel.classList.add("saved");
-    setTimeout(() => sel.classList.remove("saved"), 900);
+    flash(`POC saved for ${id}`);
   } catch (e) {
-    sel.value = prev;            // revert on failure
-    $("status").textContent = "Could not save POC: " + e;
-  } finally {
-    sel.disabled = false;
+    cell.setValue(cell.getOldValue(), true); // revert without re-triggering edit
+    flash("Could not save POC", true);
   }
 }
 
+// ---------------------------------------------------------------- table
+function buildTable() {
+  table = new Tabulator("#grid", {
+    layout: "fitDataFill",
+    height: "calc(100dvh - 232px)",
+    placeholder: "No contacts yet — run a search.",
+    selectableRows: true,
+    columnDefaults: { headerHozAlign: "left", resizable: true },
+    columns: [
+      { formatter: "rowSelection", titleFormatter: "rowSelection", hozAlign: "center",
+        headerSort: false, width: 42, frozen: true, download: false },
+      { title: "Match", field: "match_field", width: 92, formatter: matchFmt, hozAlign: "center" },
+      { title: "Last name", field: "last_name", minWidth: 130, frozen: true,
+        formatter: (c) => `<strong>${dash(c.getValue())}</strong><div class="muted sm">${esc(c.getRow().getData().contact_id)}</div>` },
+      { title: "First name", field: "first_name", minWidth: 110, formatter: (c) => dash(c.getValue()) },
+      { title: "Organization", field: "organization", minWidth: 200, formatter: (c) => dash(c.getValue()) },
+      { title: "Title", field: "title", minWidth: 170, formatter: (c) => dash(c.getValue()) },
+      { title: "Email", field: "email", minWidth: 200, formatter: emailFmt,
+        accessorDownload: (v) => v || "" },
+      { title: "Phone", field: "phone", minWidth: 120, formatter: (c) => dash(c.getValue()) },
+      { title: "Location", field: "city", minWidth: 140, formatter: locFmt, headerSort: false,
+        accessorDownload: (v, d) => [d.city, d.state].filter(Boolean).join(", ") },
+      { title: "Tags", field: "tags", minWidth: 180, formatter: tagsFmt, headerSort: false,
+        accessorDownload: (v) => (v || []).join("; ") },
+      { title: "Source", field: "source_lists", minWidth: 140, formatter: sourceFmt, headerSort: false,
+        accessorDownload: (v) => (v || []).join("; ") },
+      { title: "POC", field: "poc", width: 86, hozAlign: "center", editor: "list",
+        editorParams: { values: { "": "—", TH: "TH", KM: "KM", BW: "BW", DS: "DS" } },
+        cellEdited: savePoc },
+      { title: "DNC", field: "do_not_contact", width: 90, hozAlign: "center", formatter: dncFmt,
+        accessorDownload: (v) => (v ? "yes" : "") },
+    ],
+  });
+  table.on("rowSelectionChanged", (data) => {
+    const n = data.length;
+    $("selCount").hidden = n === 0;
+    $("exportSelBtn").hidden = n === 0;
+    $("selCount").textContent = `${n} selected`;
+  });
+}
+
+// ---------------------------------------------------------------- search
 async function search() {
+  const btn = $("searchBtn");
+  btn.setAttribute("aria-busy", "true");
   $("status").textContent = "Searching…";
   try {
     const res = await fetch("/api/search", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
+      method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify(gatherParams()),
     });
     if (res.status === 401) { window.location = "/login"; return; }
     const data = await res.json();
-    render(data.results || []);
+    await table.setData(data.results || []);
     $("status").textContent = data.count
       ? `${data.count} contact${data.count === 1 ? "" : "s"} found`
       : "No contacts matched.";
   } catch (e) {
     $("status").textContent = "Search failed: " + e;
+  } finally {
+    btn.removeAttribute("aria-busy");
   }
 }
 
-async function exportCsv() {
-  $("status").textContent = "Building CSV…";
-  const res = await fetch("/api/export.csv", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(gatherParams()),
-  });
-  if (res.status === 401) { window.location = "/login"; return; }
-  const blob = await res.blob();
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = "amic_contacts.csv";
-  a.click();
-  URL.revokeObjectURL(url);
-  $("status").textContent = "CSV downloaded.";
+function resetFilters() {
+  $("q").value = "";
+  ["state", "email_status", "source", "poc"].forEach((n) => ts[n] && ts[n].clear());
+  ts.tags && ts.tags.clear();
+  $("include_dnc").checked = false;
+  $("semantic_weight").value = 0.7;
+  $("limit").value = 50;
+  table.clearData();
+  $("status").textContent = "Enter a search to begin.";
 }
 
+function exportAll() { table.download("csv", "amic_contacts.csv", { bom: true }); }
+function exportSelected() { table.download("csv", "amic_contacts_selected.csv", { bom: true }, "selected"); }
+
+// ---------------------------------------------------------------- meta / init
+function addOptions(sel, values) {
+  for (const v of values) sel.add(new Option(v, v));
+}
 async function loadMeta() {
   const res = await fetch("/api/meta");
   if (!res.ok) return;
   const m = await res.json();
-  for (const s of m.states) $("state").add(new Option(s, s));
-  for (const s of m.email_statuses) $("email_status").add(new Option(s, s));
-  for (const s of m.sources) $("source").add(new Option(s, s));
   POC_CHOICES = m.poc_choices || [];
-  for (const p of POC_CHOICES) $("poc").add(new Option(p, p));
-  $("tagList").innerHTML = m.tags.map((t) => `<option value="${esc(t)}">`).join("");
+  addOptions($("state"), m.states);
+  addOptions($("email_status"), m.email_statuses);
+  addOptions($("source"), m.sources);
+  addOptions($("poc"), POC_CHOICES);
+  for (const t of m.tags) $("tags").add(new Option(t, t));
+
+  const single = { create: false, allowEmptyOption: true, controlInput: null };
+  ts.state = new TomSelect("#state", single);
+  ts.email_status = new TomSelect("#email_status", single);
+  ts.source = new TomSelect("#source", single);
+  ts.poc = new TomSelect("#poc", single);
+  ts.tags = new TomSelect("#tags", { create: false, plugins: ["remove_button"], maxOptions: 500 });
 }
 
-$("searchForm").addEventListener("submit", (e) => { e.preventDefault(); search(); });
-$("exportBtn").addEventListener("click", exportCsv);
-$("semantic_weight").addEventListener("input", (e) => { $("swVal").textContent = e.target.value; });
-// inline POC edits (event delegation; remember prior value for revert-on-error)
-tbody.addEventListener("focusin", (e) => {
-  if (e.target.classList.contains("poc-select")) e.target.dataset.prev = e.target.value;
-});
-tbody.addEventListener("change", (e) => {
-  if (e.target.classList.contains("poc-select")) savePoc(e.target);
-});
-loadMeta();
+let flashTimer = null;
+function flash(msg, bad) {
+  let el = $("toast");
+  if (!el) { el = document.createElement("div"); el.id = "toast"; document.body.appendChild(el); }
+  el.textContent = msg;
+  el.className = "toast show" + (bad ? " bad" : "");
+  clearTimeout(flashTimer);
+  flashTimer = setTimeout(() => { el.className = "toast"; }, 1800);
+}
+
+function init() {
+  buildTable();
+  loadMeta();
+  $("searchForm").addEventListener("submit", (e) => { e.preventDefault(); search(); });
+  $("resetBtn").addEventListener("click", resetFilters);
+  $("exportAllBtn").addEventListener("click", exportAll);
+  $("exportSelBtn").addEventListener("click", exportSelected);
+}
+
+if (document.readyState !== "loading") init();
+else document.addEventListener("DOMContentLoaded", init);

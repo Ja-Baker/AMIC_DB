@@ -1,84 +1,96 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="light">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>AMIC Contact Search</title>
+  <link rel="icon" type="image/png" href="/static/img/amic-logo-color.png">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/tom-select@2.3.1/dist/css/tom-select.min.css">
+  <link rel="stylesheet" href="https://unpkg.com/tabulator-tables@6.3.1/dist/css/tabulator.min.css">
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
   <header class="topbar">
-    <strong>AMIC Contact Search</strong>
+    <a class="brand" href="/">
+      <img src="/static/img/amic-logo-white.png" alt="AMIC STL">
+      <span class="brand-sub">Contact Search</span>
+    </a>
     <a class="logout" href="/logout">Sign out</a>
   </header>
 
-  <main class="layout">
-    <form id="searchForm" class="panel">
-      <label>Search
-        <input type="text" id="q" name="q" placeholder="e.g. workforce development, CNC machining, apprenticeship…" autofocus>
+  <main class="layout" x-data="{ adv:false, sw:0.7 }">
+    <form id="searchForm" class="panel" @submit.prevent>
+      <label class="field">
+        <span>Search</span>
+        <input type="text" id="q" name="q"
+               placeholder="e.g. workforce development, CNC machining, robotics…" autofocus>
       </label>
 
-      <div class="row">
-        <label>State
+      <label class="field">
+        <span>Tags <small>(match any)</small></span>
+        <select id="tags" multiple placeholder="Pick one or more tags…"></select>
+      </label>
+
+      <div class="grid-2">
+        <label class="field"><span>State</span>
           <select id="state"><option value="">Any</option></select>
         </label>
-        <label>Email status
-          <select id="email_status"><option value="">Any</option></select>
-        </label>
-      </div>
-
-      <label>Tags (match any)
-        <input type="text" id="tags" list="tagList" placeholder="type a tag, comma-separate for several">
-        <datalist id="tagList"></datalist>
-      </label>
-
-      <div class="row">
-        <label>Source list
-          <select id="source"><option value="">Any</option></select>
-        </label>
-        <label>POC
+        <label class="field"><span>POC</span>
           <select id="poc"><option value="">Any</option></select>
         </label>
       </div>
 
-      <label class="check">
-        <input type="checkbox" id="include_dnc"> Include do-not-contact
+      <div class="grid-2">
+        <label class="field"><span>Source list</span>
+          <select id="source"><option value="">Any</option></select>
+        </label>
+        <label class="field"><span>Email status</span>
+          <select id="email_status"><option value="">Any</option></select>
+        </label>
+      </div>
+
+      <label class="switch">
+        <input type="checkbox" id="include_dnc" role="switch">
+        <span>Include do-not-contact</span>
       </label>
 
-      <details>
-        <summary>Advanced</summary>
-        <label>Semantic vs keyword weight: <span id="swVal">0.7</span>
-          <input type="range" id="semantic_weight" min="0" max="1" step="0.1" value="0.7">
+      <button type="button" class="link-toggle" @click="adv = !adv"
+              x-text="adv ? '− Advanced options' : '+ Advanced options'">+ Advanced options</button>
+      <div class="adv" x-show="adv" x-cloak>
+        <label class="field">
+          <span>Relevance: keyword ⟷ meaning (<span x-text="sw"></span>)</span>
+          <input type="range" id="semantic_weight" min="0" max="1" step="0.1"
+                 value="0.7" x-model="sw">
         </label>
-        <label>Max results
+        <label class="field"><span>Max results</span>
           <input type="number" id="limit" value="50" min="1" max="200">
         </label>
-      </details>
+      </div>
 
       <div class="actions">
-        <button type="submit">Search</button>
-        <button type="button" id="exportBtn" class="secondary">Export CSV</button>
+        <button type="submit" id="searchBtn" class="btn-primary">Search</button>
+        <button type="button" id="resetBtn" class="btn-ghost">Reset</button>
       </div>
       <p class="hint">Tip: leave the search box empty to browse purely by filters.</p>
     </form>
 
     <section class="results">
-      <div id="status" class="muted">Enter a search to begin.</div>
-      <div class="tablewrap">
-        <table id="resultsTable" hidden>
-          <thead>
-            <tr>
-              <th>Match</th><th>Last name</th><th>First name</th><th>Organization</th><th>Title</th>
-              <th>Email</th><th>Phone</th><th>Location</th><th>Tags</th>
-              <th>Source</th><th>POC</th><th>DNC</th>
-            </tr>
-          </thead>
-          <tbody></tbody>
-        </table>
+      <div class="results-bar">
+        <span id="status" class="status">Enter a search to begin.</span>
+        <div class="results-actions">
+          <span id="selCount" class="sel-count" hidden></span>
+          <button type="button" id="exportSelBtn" class="btn-ghost" hidden>Export selected</button>
+          <button type="button" id="exportAllBtn" class="btn-outline">Export CSV</button>
+        </div>
       </div>
+      <div id="grid"></div>
     </section>
   </main>
 
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.1/dist/cdn.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/tom-select@2.3.1/dist/js/tom-select.complete.min.js"></script>
+  <script src="https://unpkg.com/tabulator-tables@6.3.1/dist/js/tabulator.min.js"></script>
   <script src="/static/app.js"></script>
 </body>
 </html>
