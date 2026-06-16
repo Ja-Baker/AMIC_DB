@@ -31,7 +31,10 @@ function dash(v) {
 function matchBadge(r) {
   const mf = r.match_field;
   if (!mf) return `<span class="match related" title="Found by meaning, not exact words">related</span>`;
-  const label = { name: "name", organization: "org", title: "title", notes: "notes" }[mf] || mf;
+  if (mf === "similar")
+    return `<span class="match similar" title="Close / typo match on name or organization">similar</span>`;
+  const label = { name: "name", organization: "org", title: "title",
+                  tags: "tag", city: "city", notes: "notes" }[mf] || mf;
   return `<span class="match exact" title="Exact match in ${esc(mf)}">${esc(label)}</span>`;
 }
 
