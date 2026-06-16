@@ -76,4 +76,9 @@ set -a; . ./.env; set +a
   clear it. Filter by POC, or by "include do-not-contact", from the sidebar.
 - **Advanced**: semantic-vs-keyword weight slider, max results.
 - **Export CSV**: downloads the current result set (last name, first name, organization,
-  title, contact details, source lists, POC, do-not-contact) for outreach.
+  title, contact details, source lists, POC, do-not-contact) for outreach. Tick rows to
+  export only the selected contacts.
+- **Saved lists**: tick contacts, then **Lists → New list from selection** to save a named,
+  reusable outreach list. Reopen a list any time to view/export it, add or remove the
+  current selection, rename it, or delete it. Lists persist in the database
+  (`contact_lists` / `contact_list_members`).
