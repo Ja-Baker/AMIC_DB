@@ -116,6 +116,41 @@ a.email:hover { text-decoration: underline; }
 .dnc { display: inline-block; color: #b01034; background: #fde7ec; font-size: 10px; font-weight: 700;
   padding: 2px 7px; border-radius: 999px; }
 
+/* ---------------------------------------------------------------- saved lists */
+.sm-btn { padding: 6px 11px; font-size: 13px; }
+.lists-menu { position: relative; }
+.lists-panel {
+  position: absolute; right: 0; top: calc(100% + 8px); width: 280px; z-index: 40;
+  background: #fff; border: 1px solid var(--line); border-radius: 12px;
+  box-shadow: 0 14px 40px rgba(10,8,30,.18); padding: 12px;
+}
+.lists-head { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em;
+  color: var(--muted); margin-bottom: 8px; }
+.lists-ul { list-style: none; margin: 0 0 10px; padding: 0; max-height: 280px; overflow-y: auto; }
+.lists-ul li { display: flex; align-items: center; gap: 6px; }
+.lists-ul li.pad { padding: 6px 4px; }
+.lists-ul .list-open {
+  flex: 1; text-align: left; background: none; border: none; cursor: pointer;
+  padding: 8px; border-radius: 8px; font-size: 14px; color: var(--ink); font-weight: 500;
+}
+.lists-ul .list-open:hover { background: #f6f4fd; }
+.lists-ul .list-add {
+  background: none; border: 1px solid var(--line); color: var(--navy); cursor: pointer;
+  width: 30px; height: 30px; border-radius: 8px; font-size: 16px; line-height: 1; padding: 0;
+}
+.lists-ul .list-add:hover { background: var(--navy); color: #fff; }
+.block-btn { width: 100%; }
+
+.list-banner {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+  background: #efeaf7; border: 1px solid #ddd3ee; border-left: 4px solid var(--crimson);
+  border-radius: 10px; padding: 10px 14px; margin-bottom: 12px;
+}
+.list-banner strong { color: var(--navy); }
+.list-banner-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.btn-ghost.danger { color: #b01034; border-color: #f2cdd6; }
+.btn-ghost.danger:hover { background: #fde7ec; }
+
 /* ---------------------------------------------------------------- Tabulator brand theme */
 .tabulator { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
   font-size: 13.5px; }

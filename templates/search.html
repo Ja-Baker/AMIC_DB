@@ -80,10 +80,31 @@
         <span id="status" class="status">Enter a search to begin.</span>
         <div class="results-actions">
           <span id="selCount" class="sel-count" hidden></span>
+          <div class="lists-menu">
+            <button type="button" id="listsBtn" class="btn-ghost">★ Lists</button>
+            <div id="listsPanel" class="lists-panel" hidden>
+              <div class="lists-head">Saved lists</div>
+              <ul id="listsUl" class="lists-ul"><li class="muted sm pad">Loading…</li></ul>
+              <button type="button" id="newListBtn" class="btn-primary block-btn">+ New list from selection</button>
+            </div>
+          </div>
           <button type="button" id="exportSelBtn" class="btn-ghost" hidden>Export selected</button>
           <button type="button" id="exportAllBtn" class="btn-outline">Export CSV</button>
         </div>
       </div>
+
+      <div id="listBanner" class="list-banner" hidden>
+        <span>Viewing list: <strong id="listName"></strong>
+          <span id="listMembCount" class="muted sm"></span></span>
+        <div class="list-banner-actions">
+          <button type="button" id="addToListBtn" class="btn-ghost sm-btn" hidden>Add selected</button>
+          <button type="button" id="removeFromListBtn" class="btn-ghost sm-btn" hidden>Remove selected</button>
+          <button type="button" id="renameListBtn" class="btn-ghost sm-btn">Rename</button>
+          <button type="button" id="deleteListBtn" class="btn-ghost sm-btn danger">Delete list</button>
+          <button type="button" id="backBtn" class="btn-outline sm-btn">Back to search</button>
+        </div>
+      </div>
+
       <div id="grid"></div>
     </section>
   </main>

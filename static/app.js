@@ -3,6 +3,7 @@
 const $ = (id) => document.getElementById(id);
 let POC_CHOICES = [];
 let table = null;
+let currentListId = null;
 const ts = {}; // Tom Select instances
 
 // ---------------------------------------------------------------- helpers
@@ -113,16 +114,26 @@ function buildTable() {
         accessorDownload: (v) => (v ? "yes" : "") },
     ],
   });
-  table.on("rowSelectionChanged", (data) => {
-    const n = data.length;
-    $("selCount").hidden = n === 0;
-    $("exportSelBtn").hidden = n === 0;
-    $("selCount").textContent = `${n} selected`;
-  });
+  table.on("rowSelectionChanged", (data) => updateSelectionUI(data.length));
+}
+
+function updateSelectionUI(n) {
+  $("selCount").hidden = n === 0;
+  $("exportSelBtn").hidden = n === 0;
+  $("selCount").textContent = `${n} selected`;
+  // list-context buttons depend on both selection and whether a list is open
+  if (currentListId != null) {
+    $("addToListBtn").hidden = n === 0;
+    $("removeFromListBtn").hidden = n === 0;
+  }
+}
+function selectedIds() {
+  return (table ? table.getSelectedData() : []).map((d) => d.contact_id);
 }
 
 // ---------------------------------------------------------------- search
 async function search() {
+  if (currentListId != null) exitListContext();
   const btn = $("searchBtn");
   btn.setAttribute("aria-busy", "true");
   $("status").textContent = "Searching…";
@@ -191,6 +202,119 @@ function flash(msg, bad) {
   flashTimer = setTimeout(() => { el.className = "toast"; }, 1800);
 }
 
+// ---------------------------------------------------------------- saved lists
+async function api(url, body) {
+  const opt = body ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : {};
+  const res = await fetch(url, opt);
+  if (res.status === 401) { window.location = "/login"; throw new Error("auth"); }
+  if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || "request failed"); }
+  return res.json();
+}
+
+async function refreshLists() {
+  const ul = $("listsUl");
+  try {
+    const { lists } = await api("/api/lists");
+    ul.innerHTML = lists.length
+      ? lists.map((l) =>
+          `<li data-id="${l.id}">
+             <button class="list-open" title="Open list">${esc(l.name)} <span class="muted">(${l.count})</span></button>
+             <button class="list-add" title="Add selected to this list">＋</button>
+           </li>`).join("")
+      : '<li class="muted sm pad">No saved lists yet.</li>';
+  } catch (e) { ul.innerHTML = `<li class="muted sm pad">${esc(e.message)}</li>`; }
+}
+
+function toggleListsPanel(show) {
+  const p = $("listsPanel");
+  const open = show != null ? show : p.hidden;
+  p.hidden = !open;
+  if (open) refreshLists();
+}
+
+async function openList(id) {
+  try {
+    const data = await api(`/api/lists/${id}`);
+    currentListId = id;
+    table.hideColumn("match_field");
+    await table.setData(data.members || []);
+    $("listName").textContent = data.name;
+    $("listMembCount").textContent = `(${data.count})`;
+    $("listBanner").hidden = false;
+    $("status").textContent = `Saved list — ${data.count} contact${data.count === 1 ? "" : "s"}`;
+    updateSelectionUI(0);
+    toggleListsPanel(false);
+  } catch (e) { flash(e.message, true); }
+}
+
+function exitListContext() {
+  currentListId = null;
+  $("listBanner").hidden = true;
+  $("addToListBtn").hidden = true;
+  $("removeFromListBtn").hidden = true;
+  table.showColumn("match_field");
+}
+function backToSearch() {
+  exitListContext();
+  table.clearData();
+  $("status").textContent = "Enter a search to begin.";
+}
+
+async function newList() {
+  const ids = selectedIds();
+  const name = (prompt(`Name this list${ids.length ? ` (${ids.length} selected)` : ""}:`) || "").trim();
+  if (!name) return;
+  try {
+    const r = await api("/api/lists", { name, contact_ids: ids });
+    flash(`Created “${name}”${ids.length ? ` with ${r.added}` : ""}`);
+    refreshLists();
+  } catch (e) { flash(e.message, true); }
+}
+
+async function addSelectedToList(id) {
+  const ids = selectedIds();
+  if (!ids.length) { flash("Select contacts first", true); return; }
+  try {
+    const r = await api(`/api/lists/${id}/add`, { contact_ids: ids });
+    flash(`Added ${r.added} to list`);
+    refreshLists();
+    if (currentListId === id) openList(id);
+  } catch (e) { flash(e.message, true); }
+}
+
+async function removeSelectedFromList() {
+  const ids = selectedIds();
+  if (!ids.length || currentListId == null) return;
+  try {
+    const r = await api(`/api/lists/${currentListId}/remove`, { contact_ids: ids });
+    flash(`Removed ${r.removed}`);
+    openList(currentListId);
+  } catch (e) { flash(e.message, true); }
+}
+
+async function renameList() {
+  if (currentListId == null) return;
+  const name = (prompt("Rename list:", $("listName").textContent) || "").trim();
+  if (!name) return;
+  try {
+    await api(`/api/lists/${currentListId}/rename`, { name });
+    $("listName").textContent = name;
+    flash("Renamed");
+    refreshLists();
+  } catch (e) { flash(e.message, true); }
+}
+
+async function deleteList() {
+  if (currentListId == null) return;
+  if (!confirm(`Delete list “${$("listName").textContent}”? This can’t be undone.`)) return;
+  try {
+    await api(`/api/lists/${currentListId}/delete`, {});
+    flash("List deleted");
+    backToSearch();
+    refreshLists();
+  } catch (e) { flash(e.message, true); }
+}
+
 function init() {
   buildTable();
   loadMeta();
@@ -198,6 +322,24 @@ function init() {
   $("resetBtn").addEventListener("click", resetFilters);
   $("exportAllBtn").addEventListener("click", exportAll);
   $("exportSelBtn").addEventListener("click", exportSelected);
+
+  // saved lists
+  $("listsBtn").addEventListener("click", (e) => { e.stopPropagation(); toggleListsPanel(); });
+  $("listsUl").addEventListener("click", (e) => {
+    const li = e.target.closest("li[data-id]"); if (!li) return;
+    const id = parseInt(li.dataset.id, 10);
+    if (e.target.classList.contains("list-add")) addSelectedToList(id);
+    else openList(id);
+  });
+  $("newListBtn").addEventListener("click", newList);
+  $("addToListBtn").addEventListener("click", () => addSelectedToList(currentListId));
+  $("removeFromListBtn").addEventListener("click", removeSelectedFromList);
+  $("renameListBtn").addEventListener("click", renameList);
+  $("deleteListBtn").addEventListener("click", deleteList);
+  $("backBtn").addEventListener("click", backToSearch);
+  document.addEventListener("click", (e) => {
+    if (!$("listsPanel").hidden && !e.target.closest(".lists-menu")) toggleListsPanel(false);
+  });
 }
 
 if (document.readyState !== "loading") init();

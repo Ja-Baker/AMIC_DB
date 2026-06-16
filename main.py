@@ -232,3 +232,128 @@ async def api_export(request: Request):
         media_type="text/csv",
         headers={"Content-Disposition": "attachment; filename=amic_contacts.csv"},
     )
+
+
+# ---------------------------------------------------------------- saved lists
+# Member rows mirror the search result shape so the same grid renders them.
+_MEMBER_SQL = """
+    select c.contact_id, c.last_name, c.first_name, c.organization, c.title,
+           c.email, c.email_status, c.phone, c.linkedin, c.city, c.state,
+           c.tags, c.source_lists, c.poc, c.do_not_contact, null::text as match_field
+    from contact_list_members m
+    join contacts c on c.contact_id = m.contact_id
+    where m.list_id = %s
+    order by c.last_name asc nulls last, c.full_name asc
+"""
+_MEMBER_COLS = ["contact_id", "last_name", "first_name", "organization", "title",
+                "email", "email_status", "phone", "linkedin", "city", "state",
+                "tags", "source_lists", "poc", "do_not_contact", "match_field"]
+
+
+def _ids(body):
+    ids = body.get("contact_ids") or []
+    return [str(x) for x in ids if x]
+
+
+@app.get("/api/lists")
+def lists_all(request: Request):
+    if not _authed(request):
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    with _pool.connection() as conn, conn.cursor() as cur:
+        cur.execute("""select l.id, l.name, count(m.contact_id) as n
+                       from contact_lists l
+                       left join contact_list_members m on m.list_id = l.id
+                       group by l.id, l.name order by lower(l.name)""")
+        rows = [{"id": r[0], "name": r[1], "count": r[2]} for r in cur.fetchall()]
+    return {"lists": rows}
+
+
+@app.post("/api/lists")
+async def lists_create(request: Request):
+    if not _authed(request):
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    body = await request.json()
+    name = _norm(body.get("name"))
+    if not name:
+        return JSONResponse({"error": "missing name"}, status_code=400)
+    ids = _ids(body)
+    with _pool.connection() as conn, conn.cursor() as cur:
+        cur.execute("insert into contact_lists(name) values (%s) returning id", (name,))
+        list_id = cur.fetchone()[0]
+        if ids:
+            cur.execute("""insert into contact_list_members(list_id, contact_id)
+                           select %s, x from unnest(%s::text[]) x
+                           on conflict do nothing""", (list_id, ids))
+    return {"ok": True, "id": list_id, "name": name, "added": len(ids)}
+
+
+@app.get("/api/lists/{list_id}")
+def lists_detail(request: Request, list_id: int):
+    if not _authed(request):
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    with _pool.connection() as conn, conn.cursor() as cur:
+        cur.execute("select name from contact_lists where id = %s", (list_id,))
+        row = cur.fetchone()
+        if not row:
+            return JSONResponse({"error": "not found"}, status_code=404)
+        name = row[0]
+        cur.execute(_MEMBER_SQL, (list_id,))
+        members = [dict(zip(_MEMBER_COLS, r)) for r in cur.fetchall()]
+    return {"id": list_id, "name": name, "count": len(members), "members": members}
+
+
+@app.post("/api/lists/{list_id}/add")
+async def lists_add(request: Request, list_id: int):
+    if not _authed(request):
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    ids = _ids(await request.json())
+    if not ids:
+        return JSONResponse({"error": "no contacts"}, status_code=400)
+    with _pool.connection() as conn, conn.cursor() as cur:
+        cur.execute("select 1 from contact_lists where id = %s", (list_id,))
+        if not cur.fetchone():
+            return JSONResponse({"error": "not found"}, status_code=404)
+        cur.execute("""insert into contact_list_members(list_id, contact_id)
+                       select %s, x from unnest(%s::text[]) x
+                       on conflict do nothing""", (list_id, ids))
+        added = cur.rowcount
+    return {"ok": True, "added": added}
+
+
+@app.post("/api/lists/{list_id}/remove")
+async def lists_remove(request: Request, list_id: int):
+    if not _authed(request):
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    ids = _ids(await request.json())
+    if not ids:
+        return JSONResponse({"error": "no contacts"}, status_code=400)
+    with _pool.connection() as conn, conn.cursor() as cur:
+        cur.execute("delete from contact_list_members where list_id = %s and contact_id = any(%s::text[])",
+                    (list_id, ids))
+        removed = cur.rowcount
+    return {"ok": True, "removed": removed}
+
+
+@app.post("/api/lists/{list_id}/rename")
+async def lists_rename(request: Request, list_id: int):
+    if not _authed(request):
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    name = _norm((await request.json()).get("name"))
+    if not name:
+        return JSONResponse({"error": "missing name"}, status_code=400)
+    with _pool.connection() as conn, conn.cursor() as cur:
+        cur.execute("update contact_lists set name = %s where id = %s", (name, list_id))
+        if not cur.rowcount:
+            return JSONResponse({"error": "not found"}, status_code=404)
+    return {"ok": True, "name": name}
+
+
+@app.post("/api/lists/{list_id}/delete")
+def lists_delete(request: Request, list_id: int):
+    if not _authed(request):
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    with _pool.connection() as conn, conn.cursor() as cur:
+        cur.execute("delete from contact_lists where id = %s", (list_id,))
+        if not cur.rowcount:
+            return JSONResponse({"error": "not found"}, status_code=404)
+    return {"ok": True}
