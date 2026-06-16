@@ -86,7 +86,9 @@ function buildTable() {
   table = new Tabulator("#grid", {
     layout: "fitDataFill",
     height: "calc(100dvh - 232px)",
-    placeholder: "No contacts yet — run a search.",
+    placeholder: "<div class='empty'><strong>No results yet</strong>" +
+      "<span>Type a search or pick filters on the left, then hit Search. " +
+      "Leave the box empty to browse by filters alone.</span></div>",
     selectableRows: true,
     columnDefaults: { headerHozAlign: "left", resizable: true },
     columns: [
