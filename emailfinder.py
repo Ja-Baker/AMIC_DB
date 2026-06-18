@@ -94,16 +94,18 @@ def candidate_locals(first: str, last: str) -> list[str]:
 
 
 # ----------------------------------------------------------------- Hunter.io
-def find_hunter(first: str, last: str, domain: str, api_key: str) -> Found | None:
-    if not api_key:
+def find_hunter(first: str, last: str, api_key: str,
+                *, domain: str | None = None, company: str | None = None) -> Found | None:
+    """Hunter Email Finder. Accepts a domain OR a company name (Hunter resolves it)."""
+    if not api_key or not (domain or company):
         return None
+    params = {"first_name": first, "last_name": last, "api_key": api_key}
+    if domain:
+        params["domain"] = domain
+    else:
+        params["company"] = company
     try:
-        r = httpx.get(
-            "https://api.hunter.io/v2/email-finder",
-            params={"domain": domain, "first_name": first, "last_name": last,
-                    "api_key": api_key},
-            timeout=10.0,
-        )
+        r = httpx.get("https://api.hunter.io/v2/email-finder", params=params, timeout=10.0)
         if r.status_code != 200:
             return None
         data = r.json().get("data") or {}
@@ -119,25 +121,32 @@ def find_hunter(first: str, last: str, domain: str, api_key: str) -> Found | Non
 
 # ----------------------------------------------------------------- orchestrator
 def find_email(first: str | None, last: str | None, full_name: str | None,
-               domain: str | None, *, hunter_key: str | None = None) -> Found | None:
+               domain: str | None, *, company: str | None = None,
+               hunter_key: str | None = None) -> Found | None:
     """
-    Resolve a best-guess email for one person. Hunter (when configured) is tried
-    first because it's the only arm that can actually confirm an address; the
-    local pattern guess is the fallback. Returns None when there's no company
-    domain to build on.
+    Resolve a best-guess email for one person.
+
+    Arms, in order:
+      1. Hunter by domain     (when a key + company domain are known)
+      2. local pattern guess  (needs a domain; unverified, low confidence)
+      3. Hunter by company    (when a key is set but no domain — name only)
+
+    Returns None when there's nothing to go on (no domain and, for the API arm,
+    no company name / no key).
     """
     domain = domain_from_website(domain)  # accept a raw URL/website too
-    if not domain:
-        return None
     hunter_key = HUNTER_API_KEY if hunter_key is None else hunter_key
     f, l = split_name(first, last, full_name)
 
-    hit = find_hunter(f, l, domain, hunter_key)
-    if hit:
-        return hit
+    if domain:
+        hit = find_hunter(f, l, hunter_key, domain=domain)
+        if hit:
+            return hit
+        cands = candidate_locals(f, l)
+        if cands:
+            return Found(email=f"{cands[0]}@{domain}", confidence=0.3, source="pattern",
+                         verified=False, detail="pattern guess — confirm before sending")
+        return None
 
-    cands = candidate_locals(f, l)
-    if cands:
-        return Found(email=f"{cands[0]}@{domain}", confidence=0.3, source="pattern",
-                     verified=False, detail="pattern guess — confirm before sending")
-    return None
+    # No domain — Hunter can still resolve from the company name.
+    return find_hunter(f, l, hunter_key, company=company)

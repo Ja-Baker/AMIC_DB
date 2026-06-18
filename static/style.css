@@ -219,12 +219,22 @@ a.email:hover { text-decoration: underline; }
 .toast.bad { background: var(--crimson-d, #c4123f); }
 
 /* ---------------------------------------------------------------- topbar links */
-.topbar-links { display: flex; align-items: center; gap: 10px; }
+.topbar-links { display: flex; align-items: center; gap: 8px; }
 .topbar .nav-link {
-  color: #fff; text-decoration: none; font-size: 13.5px; font-weight: 700;
-  background: var(--crimson, #e8194f); border-radius: 8px; padding: 7px 14px; transition: background .12s;
+  color: #fff; text-decoration: none; font-size: 13.5px; font-weight: 600;
+  border: 1px solid rgba(255,255,255,.22); border-radius: 8px; padding: 7px 14px; transition: background .12s, border-color .12s;
 }
-.topbar .nav-link:hover { background: var(--crimson-d, #c4123f); }
+.topbar .nav-link:hover { background: rgba(255,255,255,.14); }
+.topbar .nav-link.active { background: var(--crimson, #e8194f); border-color: var(--crimson, #e8194f); }
+
+/* ---------------------------------------------------------------- finder API box */
+.api-box { border: 1px solid var(--line, #e7e5ef); border-radius: 12px; background: #faf9fe;
+  padding: 14px; margin: 4px 0 12px; }
+.api-head { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em;
+  color: var(--navy, #1e1545); margin-bottom: 10px; }
+.api-box .field { margin-bottom: 12px; }
+.api-box .field:last-child { margin-bottom: 0; }
+.pill.ok { background: #e8f3ec; color: #1f7a44; }
 
 /* ---------------------------------------------------------------- export menu */
 .export-panel { width: 320px; }

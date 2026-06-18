@@ -220,6 +220,13 @@ def import_page(request: Request):
     return templates.TemplateResponse("import.html", {"request": request})
 
 
+@app.get("/email-finder", response_class=HTMLResponse)
+def email_finder_page(request: Request):
+    if not _authed(request):
+        return RedirectResponse("/login", status_code=303)
+    return templates.TemplateResponse("email_finder.html", {"request": request})
+
+
 @app.get("/healthz")
 def healthz():
     return {"ok": True}
@@ -653,12 +660,22 @@ async def api_import_commit(request: Request):
 # ================================================================ email finder
 @app.post("/api/email/find")
 async def api_email_find(request: Request):
-    """Find emails for contacts missing one. Background job; poll /api/jobs/{id}."""
+    """
+    Find emails for contacts missing one. Background job; poll /api/jobs/{id}.
+    Body: contact_ids[] (or none -> all missing, capped), and options:
+      hunter_key     str  per-request Hunter.io key (overrides the env key)
+      local_only     bool skip the API arm, pattern-guess only
+      min_confidence float don't write candidates below this score (0..1)
+    """
     if not _authed(request):
         return JSONResponse({"error": "unauthorized"}, status_code=401)
     body = await request.json()
     ids = [str(x) for x in (body.get("contact_ids") or []) if x]
-    limit = min(int(body.get("limit", 300)), 1000)
+    limit = min(int(body.get("limit", 500)), 1500)
+    local_only = bool(body.get("local_only"))
+    min_conf = float(body.get("min_confidence") or 0)
+    # "" forces the local pattern arm; None lets find_email fall back to the env key.
+    key = "" if local_only else (_norm(body.get("hunter_key")))
 
     def job(progress):
         with _pool.connection() as conn, conn.cursor() as cur:
@@ -678,16 +695,17 @@ async def api_email_find(request: Request):
                     order by c.contact_id limit %s""", (limit,))
             targets = cur.fetchall()
 
-        found, details = 0, []
+        found = skipped_low = no_match = 0
+        details = []
         progress(total=len(targets), message=f"Searching {len(targets)} contacts…")
         for i, (cid, first, last, full, org, website) in enumerate(targets):
             domain = domain_from_website(website)
             hit = None
             try:
-                hit = find_email(first, last, full, domain)
+                hit = find_email(first, last, full, domain, company=org, hunter_key=key)
             except Exception:
                 hit = None
-            if hit:
+            if hit and hit.confidence >= min_conf:
                 with _pool.connection() as conn, conn.cursor() as cur:
                     cur.execute("""update contacts
                                    set email = %s, email_status = 'check',
@@ -698,15 +716,47 @@ async def api_email_find(request: Request):
                 details.append({"contact_id": cid, "full_name": full, "email": hit.email,
                                 "confidence": hit.confidence, "source": hit.source,
                                 "detail": hit.detail})
+            elif hit:
+                skipped_low += 1
+                details.append({"contact_id": cid, "full_name": full, "email": None,
+                                "confidence": hit.confidence, "source": hit.source,
+                                "detail": f"below threshold ({hit.confidence:.2f})"})
             else:
+                no_match += 1
                 details.append({"contact_id": cid, "full_name": full, "email": None,
                                 "confidence": 0, "source": None,
                                 "detail": "no domain" if not domain else "no match"})
             progress(done=i + 1, message=f"{found} found / {i + 1} checked")
-        return {"checked": len(targets), "found": found, "details": details}
+        return {"checked": len(targets), "found": found,
+                "skipped_low": skipped_low, "no_match": no_match, "details": details}
 
     jid = _start_job("email", job)
     return {"job": jid}
+
+
+@app.post("/api/email/apply")
+async def api_email_apply(request: Request):
+    """Bulk-confirm or clear found emails. action: 'accept' | 'clear'."""
+    if not _authed(request):
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    body = await request.json()
+    ids = [str(x) for x in (body.get("contact_ids") or []) if x]
+    action = body.get("action")
+    if not ids:
+        return JSONResponse({"error": "no contacts"}, status_code=400)
+    with _pool.connection() as conn, conn.cursor() as cur:
+        if action == "accept":   # promote guessed (check) emails to verified
+            cur.execute("""update contacts set email_status = 'valid format'
+                           where contact_id = any(%s) and email_status = 'check'""", (ids,))
+        elif action == "clear":  # discard a bad guess, back to missing
+            cur.execute("""update contacts
+                           set email = null, email_status = 'missing',
+                               email_source = null, email_confidence = null
+                           where contact_id = any(%s)""", (ids,))
+        else:
+            return JSONResponse({"error": "bad action"}, status_code=400)
+        n = cur.rowcount
+    return {"ok": True, "updated": n}
 
 
 # ================================================================ exports
