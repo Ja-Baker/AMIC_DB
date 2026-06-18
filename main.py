@@ -14,15 +14,21 @@ Env vars (set these in Railway):
 import csv
 import io
 import os
+import re
+import threading
+import uuid
 
 from fastapi import FastAPI, Form, Request
-from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse, JSONResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
+from openpyxl import Workbook
 from fastembed import TextEmbedding
 from psycopg_pool import ConnectionPool
+
+from emailfinder import find_email, domain_from_website
 
 MODEL_NAME = "BAAI/bge-base-en-v1.5"
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -39,6 +45,7 @@ templates = Jinja2Templates(directory=os.path.join(HERE, "templates"))
 # Loaded once at startup (model + a small connection pool).
 _model: TextEmbedding | None = None
 _pool: ConnectionPool | None = None
+_model_lock = threading.Lock()  # fastembed model is shared across worker threads
 
 
 @app.on_event("startup")
@@ -61,9 +68,64 @@ def _embed_query(q: str) -> str | None:
     return "[" + ",".join(f"{x:.6f}" for x in vec) + "]"
 
 
+def _embed_passages(cards: list[str]) -> list[str]:
+    """Embed contact 'cards' as bge passages -> pgvector literals (plain, no prefix)."""
+    if not cards:
+        return []
+    with _model_lock:
+        vecs = list(_model.embed(cards, batch_size=64))
+    return ["[" + ",".join(f"{x:.6f}" for x in v.tolist()) + "]" for v in vecs]
+
+
+def _card(full_name, title, organization, tags, notes) -> str:
+    """Same card string embed.py uses: full_name | title | organization | tags | notes."""
+    tags_joined = " ".join(tags) if tags else ""
+    parts = [full_name or "", title or "", organization or "", tags_joined, notes or ""]
+    return " | ".join(parts)
+
+
 def _norm(v):
     v = (v or "").strip() if isinstance(v, str) else v
     return v or None
+
+
+# ---------------------------------------------------------------- background jobs
+# Long operations (embedding an import, SMTP-probing for emails) run in a worker
+# thread so the request returns immediately; the client polls /api/jobs/{id}.
+_JOBS: dict[str, dict] = {}
+_JOBS_LOCK = threading.Lock()
+
+
+def _job_set(jid: str, **kw):
+    with _JOBS_LOCK:
+        if jid in _JOBS:
+            _JOBS[jid].update(kw)
+
+
+def _start_job(kind: str, fn) -> str:
+    """Spawn fn(progress) in a daemon thread; return a job id to poll."""
+    jid = uuid.uuid4().hex[:12]
+    with _JOBS_LOCK:
+        # keep the store from growing forever across a long-lived process
+        if len(_JOBS) > 200:
+            for old in [k for k, v in _JOBS.items() if v["status"] != "running"][:100]:
+                _JOBS.pop(old, None)
+        _JOBS[jid] = {"id": jid, "kind": kind, "status": "running",
+                      "done": 0, "total": 0, "message": "Starting…",
+                      "result": None, "error": None}
+
+    def progress(**kw):
+        _job_set(jid, **kw)
+
+    def runner():
+        try:
+            result = fn(progress)
+            _job_set(jid, status="done", result=result, message="Done", done=_JOBS[jid]["total"])
+        except Exception as e:  # surface the failure to the polling client
+            _job_set(jid, status="error", error=str(e), message=f"Failed: {e}")
+
+    threading.Thread(target=runner, daemon=True).start()
+    return jid
 
 
 POC_CHOICES = ["TH", "KM", "BW", "DS"]  # Tracy Henke, Kory Mathews, Brandon Wegge, Doug Stuart
@@ -151,9 +213,27 @@ def home(request: Request):
     return templates.TemplateResponse("search.html", {"request": request})
 
 
+@app.get("/import", response_class=HTMLResponse)
+def import_page(request: Request):
+    if not _authed(request):
+        return RedirectResponse("/login", status_code=303)
+    return templates.TemplateResponse("import.html", {"request": request})
+
+
 @app.get("/healthz")
 def healthz():
     return {"ok": True}
+
+
+@app.get("/api/jobs/{jid}")
+def api_job(request: Request, jid: str):
+    if not _authed(request):
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    with _JOBS_LOCK:
+        job = _JOBS.get(jid)
+        if not job:
+            return JSONResponse({"error": "unknown job"}, status_code=404)
+        return dict(job)
 
 
 # ---------------------------------------------------------------- api
@@ -211,8 +291,7 @@ async def api_export(request: Request):
     if not _authed(request):
         return JSONResponse({"error": "unauthorized"}, status_code=401)
     body = await request.json()
-    rows = _run_search(**_search_args(body),
-                       limit=min(int(body.get("limit", 1000)), 2000))
+    rows = _export_rows(body)
     fields = ["contact_id", "last_name", "first_name", "full_name", "organization",
               "title", "email", "email_status", "phone", "linkedin", "city", "state",
               "tags", "source_lists", "poc", "do_not_contact"]
@@ -357,3 +436,372 @@ def lists_delete(request: Request, list_id: int):
         if not cur.rowcount:
             return JSONResponse({"error": "not found"}, status_code=404)
     return {"ok": True}
+
+
+# ================================================================ bulk import
+# The browser parses the CSV/XLSX and POSTs already-mapped rows as JSON, so the
+# server only validates, dedupes, inserts, and embeds. Importable fields:
+IMPORT_FIELDS = ["full_name", "first_name", "last_name", "title", "organization",
+                 "email", "email_status", "phone", "linkedin", "city", "state",
+                 "tags", "source_lists", "notes"]
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+def _nk(s) -> str:
+    """Normalized key for dedupe: lowercased, whitespace-collapsed."""
+    return re.sub(r"\s+", " ", (s or "").strip().lower())
+
+
+def _as_list(v):
+    """Coerce a tags/source cell (list, or ';'/',' delimited string) to a clean list."""
+    if v is None:
+        return []
+    if isinstance(v, list):
+        return [str(x).strip() for x in v if str(x).strip()]
+    return [p.strip() for p in re.split(r"[;,]", str(v)) if p.strip()]
+
+
+def _norm_import_row(raw: dict) -> dict:
+    """One incoming record -> normalized dict over IMPORT_FIELDS."""
+    r = {k: (_norm(raw.get(k)) if k not in ("tags", "source_lists") else _as_list(raw.get(k)))
+         for k in IMPORT_FIELDS}
+    if not r["full_name"]:
+        r["full_name"] = " ".join(x for x in [r["first_name"], r["last_name"]] if x) or None
+    return r
+
+
+def _load_dedupe_maps(cur):
+    """email(lower) -> contact_id, and (name|org)(lower) -> contact_id."""
+    cur.execute("select contact_id, email, full_name, organization from contacts")
+    by_email, by_nameorg = {}, {}
+    for cid, email, fn, org in cur.fetchall():
+        if email and email.strip():
+            by_email[email.strip().lower()] = cid
+        by_nameorg[_nk(fn) + "|" + _nk(org)] = cid
+    return by_email, by_nameorg
+
+
+def _classify(row: dict, by_email: dict, by_nameorg: dict):
+    """('new'|'duplicate', matched_on, existing_contact_id)."""
+    em = (row.get("email") or "").strip().lower()
+    if em and em in by_email:
+        return "duplicate", "email", by_email[em]
+    key = _nk(row.get("full_name")) + "|" + _nk(row.get("organization"))
+    if key in by_nameorg:
+        return "duplicate", "name + org", by_nameorg[key]
+    return "new", None, None
+
+
+@app.post("/api/import/preview")
+async def api_import_preview(request: Request):
+    """Classify incoming rows as new vs. likely-duplicate without writing anything."""
+    if not _authed(request):
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    rows = (await request.json()).get("rows") or []
+    norm = [_norm_import_row(r) for r in rows]
+    with _pool.connection() as conn, conn.cursor() as cur:
+        by_email, by_nameorg = _load_dedupe_maps(cur)
+    out, n_new, n_dupe, n_err = [], 0, 0, 0
+    seen_in_file = set()
+    for i, r in enumerate(norm):
+        if not r["full_name"]:
+            out.append({"idx": i, "status": "error", "matched_on": "no name",
+                        "full_name": None, "organization": r["organization"],
+                        "email": r["email"]})
+            n_err += 1
+            continue
+        status, on, _ = _classify(r, by_email, by_nameorg)
+        # also catch duplicates within the uploaded file itself
+        fk = _nk(r["full_name"]) + "|" + _nk(r["organization"])
+        if status == "new" and fk in seen_in_file:
+            status, on = "duplicate", "in this file"
+        seen_in_file.add(fk)
+        n_new += status == "new"
+        n_dupe += status == "duplicate"
+        out.append({"idx": i, "status": status, "matched_on": on,
+                    "full_name": r["full_name"], "organization": r["organization"],
+                    "email": r["email"]})
+    return {"total": len(norm), "new": n_new, "duplicates": n_dupe,
+            "errors": n_err, "fields": IMPORT_FIELDS, "rows": out}
+
+
+def _email_status_for(email: str | None) -> str:
+    if not email:
+        return "missing"
+    return "valid format" if _EMAIL_RE.match(email) else "check"
+
+
+def _commit_job(rows, policy, source_label):
+    norm = [_norm_import_row(r) for r in rows if (r.get("full_name") or r.get("first_name")
+            or r.get("last_name"))]
+
+    def job(progress):
+        inserted = merged = skipped = 0
+        affected_ids: list[str] = []
+        with _pool.connection() as conn, conn.cursor() as cur:
+            by_email, by_nameorg = _load_dedupe_maps(cur)
+            cur.execute("select lower(name), org_id from organizations")
+            org_ids = {n: o for n, o in cur.fetchall()}
+            cur.execute("select coalesce(max((substring(contact_id from 2))::int), 0) "
+                        "from contacts where contact_id ~ '^C[0-9]+$'")
+            next_n = cur.fetchone()[0] + 1
+
+            progress(total=len(norm), message="Writing contacts…")
+            for i, r in enumerate(norm):
+                if not r["full_name"]:
+                    skipped += 1
+                    progress(done=i + 1)
+                    continue
+                status, _, existing_id = _classify(r, by_email, by_nameorg)
+                src = r["source_lists"] + ([source_label] if source_label
+                                           and source_label not in r["source_lists"] else [])
+                if status == "new" or policy == "all":
+                    cid = f"C{next_n:04d}"
+                    next_n += 1
+                    oid = org_ids.get(_nk(r["organization"]))
+                    email = r["email"]
+                    cur.execute("""
+                        insert into contacts
+                          (contact_id, first_name, last_name, full_name, title, organization,
+                           org_id, email, email_status, phone, linkedin, city, state,
+                           tags, source_lists, email_source, do_not_contact, notes, embedding)
+                        values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,false,%s,null)
+                    """, (cid, r["first_name"], r["last_name"], r["full_name"], r["title"],
+                          r["organization"], oid, email,
+                          r["email_status"] or _email_status_for(email), r["phone"],
+                          r["linkedin"], r["city"], r["state"], r["tags"] or None,
+                          src or None, "import" if email else None, r["notes"]))
+                    inserted += 1
+                    affected_ids.append(cid)
+                    # keep in-batch dedupe maps current so later rows see this insert
+                    if email:
+                        by_email[email.strip().lower()] = cid
+                    by_nameorg[_nk(r["full_name"]) + "|" + _nk(r["organization"])] = cid
+                elif policy == "merge":
+                    cur.execute("""
+                        update contacts set
+                          first_name   = coalesce(nullif(first_name,''),   %(first)s),
+                          last_name    = coalesce(nullif(last_name,''),     %(last)s),
+                          title        = coalesce(nullif(title,''),         %(title)s),
+                          organization = coalesce(nullif(organization,''),  %(org)s),
+                          email        = coalesce(nullif(email,''),         %(email)s),
+                          phone        = coalesce(nullif(phone,''),         %(phone)s),
+                          linkedin     = coalesce(nullif(linkedin,''),      %(linkedin)s),
+                          city         = coalesce(nullif(city,''),          %(city)s),
+                          state        = coalesce(nullif(state,''),         %(state)s),
+                          notes        = coalesce(nullif(notes,''),         %(notes)s),
+                          tags         = (select array(select distinct e from
+                                          unnest(coalesce(tags,'{}'::text[]) || %(tags)s::text[]) e where e <> '')),
+                          source_lists = (select array(select distinct e from
+                                          unnest(coalesce(source_lists,'{}'::text[]) || %(src)s::text[]) e where e <> ''))
+                        where contact_id = %(cid)s
+                    """, {"first": r["first_name"], "last": r["last_name"], "title": r["title"],
+                          "org": r["organization"], "email": r["email"], "phone": r["phone"],
+                          "linkedin": r["linkedin"], "city": r["city"], "state": r["state"],
+                          "notes": r["notes"], "tags": r["tags"], "src": src, "cid": existing_id})
+                    cur.execute("""insert into merge_log(contact_id, full_name, rows_merged, sources)
+                                   values (%s,%s,1,%s)""",
+                                (existing_id, r["full_name"], source_label or "bulk import"))
+                    merged += 1
+                    affected_ids.append(existing_id)
+                else:  # policy == "skip"
+                    skipped += 1
+                progress(done=i + 1)
+
+            # Embed everything we touched that now lacks a vector (new rows + any
+            # merged rows whose re-embed trigger nulled the embedding).
+            if affected_ids:
+                progress(message="Generating embeddings…")
+                cur.execute("""select contact_id, full_name, title, organization, tags, notes
+                               from contacts where contact_id = any(%s) and embedding is null""",
+                            (affected_ids,))
+                todo = cur.fetchall()
+                if todo:
+                    cards = [_card(t[1], t[2], t[3], t[4], t[5]) for t in todo]
+                    vecs = _embed_passages(cards)
+                    cur.execute("create temp table _imp_emb (contact_id text primary key, "
+                                "embedding vector(768)) on commit drop")
+                    with cur.copy("copy _imp_emb (contact_id, embedding) from stdin") as cp:
+                        for (cid, *_), lit in zip(todo, vecs):
+                            cp.write_row((cid, lit))
+                    cur.execute("update contacts c set embedding = s.embedding "
+                                "from _imp_emb s where c.contact_id = s.contact_id")
+            conn.commit()
+        return {"inserted": inserted, "merged": merged, "skipped": skipped,
+                "embedded": len(affected_ids), "total": len(rows)}
+
+    return job
+
+
+@app.post("/api/import/commit")
+async def api_import_commit(request: Request):
+    """Insert/merge the uploaded rows and embed them. Returns a job id to poll."""
+    if not _authed(request):
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    body = await request.json()
+    rows = body.get("rows") or []
+    policy = body.get("policy", "skip")
+    if policy not in ("skip", "merge", "all"):
+        return JSONResponse({"error": "bad policy"}, status_code=400)
+    if not rows:
+        return JSONResponse({"error": "no rows"}, status_code=400)
+    source_label = _norm(body.get("source_label"))
+    jid = _start_job("import", _commit_job(rows, policy, source_label))
+    return {"job": jid}
+
+
+# ================================================================ email finder
+@app.post("/api/email/find")
+async def api_email_find(request: Request):
+    """Find emails for contacts missing one. Background job; poll /api/jobs/{id}."""
+    if not _authed(request):
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    body = await request.json()
+    ids = [str(x) for x in (body.get("contact_ids") or []) if x]
+    limit = min(int(body.get("limit", 300)), 1000)
+
+    def job(progress):
+        with _pool.connection() as conn, conn.cursor() as cur:
+            if ids:
+                cur.execute("""
+                    select c.contact_id, c.first_name, c.last_name, c.full_name,
+                           c.organization, o.website
+                    from contacts c left join organizations o on o.org_id = c.org_id
+                    where c.contact_id = any(%s)
+                      and (c.email is null or c.email = '')""", (ids,))
+            else:
+                cur.execute("""
+                    select c.contact_id, c.first_name, c.last_name, c.full_name,
+                           c.organization, o.website
+                    from contacts c left join organizations o on o.org_id = c.org_id
+                    where (c.email is null or c.email = '')
+                    order by c.contact_id limit %s""", (limit,))
+            targets = cur.fetchall()
+
+        found, details = 0, []
+        progress(total=len(targets), message=f"Searching {len(targets)} contacts…")
+        for i, (cid, first, last, full, org, website) in enumerate(targets):
+            domain = domain_from_website(website)
+            hit = None
+            try:
+                hit = find_email(first, last, full, domain)
+            except Exception:
+                hit = None
+            if hit:
+                with _pool.connection() as conn, conn.cursor() as cur:
+                    cur.execute("""update contacts
+                                   set email = %s, email_status = 'check',
+                                       email_source = %s, email_confidence = %s
+                                   where contact_id = %s and (email is null or email = '')""",
+                                (hit.email, hit.source, hit.confidence, cid))
+                found += 1
+                details.append({"contact_id": cid, "full_name": full, "email": hit.email,
+                                "confidence": hit.confidence, "source": hit.source,
+                                "detail": hit.detail})
+            else:
+                details.append({"contact_id": cid, "full_name": full, "email": None,
+                                "confidence": 0, "source": None,
+                                "detail": "no domain" if not domain else "no match"})
+            progress(done=i + 1, message=f"{found} found / {i + 1} checked")
+        return {"checked": len(targets), "found": found, "details": details}
+
+    jid = _start_job("email", job)
+    return {"job": jid}
+
+
+# ================================================================ exports
+def _export_rows(body: dict) -> list[dict]:
+    """Rows for an export: explicit contact_ids if given, else the current search."""
+    ids = [str(x) for x in (body.get("contact_ids") or []) if x]
+    if ids:
+        cols = ["contact_id", "last_name", "first_name", "full_name", "organization",
+                "title", "email", "email_status", "phone", "linkedin", "city", "state",
+                "tags", "source_lists", "poc", "do_not_contact"]
+        with _pool.connection() as conn, conn.cursor() as cur:
+            cur.execute(f"""select {','.join(cols)} from contacts
+                            where contact_id = any(%s)
+                            order by last_name asc nulls last, full_name asc""", (ids,))
+            rows = [dict(zip(cols, r)) for r in cur.fetchall()]
+    else:
+        rows = _run_search(**_search_args(body), limit=min(int(body.get("limit", 2000)), 5000))
+    # invite-list hygiene: drop no-email rows / collapse duplicate addresses
+    if body.get("require_email"):
+        rows = [r for r in rows if (r.get("email") or "").strip()]
+    if body.get("dedupe_email"):
+        seen, out = set(), []
+        for r in rows:
+            e = (r.get("email") or "").strip().lower()
+            if e and e in seen:
+                continue
+            if e:
+                seen.add(e)
+            out.append(r)
+        rows = out
+    return rows
+
+
+def _greeting(r: dict) -> str:
+    return f"Dear {r.get('first_name') or r.get('full_name') or 'Colleague'}"
+
+
+@app.post("/api/export.xlsx")
+async def api_export_xlsx(request: Request):
+    """Outlook / Word mail-merge sheet: one row per person, greeting column ready."""
+    if not _authed(request):
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    body = await request.json()
+    rows = _export_rows(body)
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Invitees"
+    headers = ["First Name", "Last Name", "Greeting", "Email", "Organization",
+               "Title", "City", "State", "POC"]
+    ws.append(headers)
+    for r in rows:
+        ws.append([r.get("first_name") or "", r.get("last_name") or "", _greeting(r),
+                   r.get("email") or "", r.get("organization") or "", r.get("title") or "",
+                   r.get("city") or "", r.get("state") or "", r.get("poc") or ""])
+    for col, w in zip("ABCDEFGHI", (16, 16, 22, 30, 30, 26, 16, 8, 8)):
+        ws.column_dimensions[col].width = w
+    ws.freeze_panes = "A2"
+    buf = io.BytesIO()
+    wb.save(buf)
+    return Response(
+        content=buf.getvalue(),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=amic_invitees.xlsx"})
+
+
+@app.post("/api/export/outlook.csv")
+async def api_export_outlook(request: Request):
+    """CSV with the exact headers Outlook 'Import Contacts' expects."""
+    if not _authed(request):
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    body = await request.json()
+    rows = _export_rows(body)
+    fields = ["First Name", "Last Name", "E-mail Address", "Company", "Job Title",
+              "Business Phone", "Business City", "Business State", "Web Page", "Notes"]
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(fields)
+    for r in rows:
+        w.writerow([r.get("first_name") or "", r.get("last_name") or "", r.get("email") or "",
+                    r.get("organization") or "", r.get("title") or "", r.get("phone") or "",
+                    r.get("city") or "", r.get("state") or "", r.get("linkedin") or "",
+                    "; ".join(r.get("source_lists") or [])])
+    data = "﻿" + buf.getvalue()
+    return StreamingResponse(iter([data]), media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=amic_outlook_contacts.csv"})
+
+
+@app.post("/api/export/bcc")
+async def api_export_bcc(request: Request):
+    """Semicolon-joined address string for a quick small Outlook send."""
+    if not _authed(request):
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    body = dict(await request.json())
+    body["require_email"] = True
+    body["dedupe_email"] = True
+    rows = _export_rows(body)
+    emails = [r["email"].strip() for r in rows if (r.get("email") or "").strip()]
+    return {"count": len(emails), "emails": "; ".join(emails)}

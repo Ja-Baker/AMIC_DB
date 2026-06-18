@@ -84,6 +84,7 @@ async function savePoc(cell) {
 // ---------------------------------------------------------------- table
 function buildTable() {
   table = new Tabulator("#grid", {
+    index: "contact_id",
     layout: "fitDataFill",
     height: "calc(100dvh - 232px)",
     placeholder: "<div class='empty'><strong>No results yet</strong>" +
@@ -121,7 +122,7 @@ function buildTable() {
 
 function updateSelectionUI(n) {
   $("selCount").hidden = n === 0;
-  $("exportSelBtn").hidden = n === 0;
+  $("findEmailBtn").hidden = n === 0;
   $("selCount").textContent = `${n} selected`;
   // list-context buttons depend on both selection and whether a list is open
   if (currentListId != null) {
@@ -168,8 +169,97 @@ function resetFilters() {
   $("status").textContent = "Enter a search to begin.";
 }
 
-function exportAll() { table.download("csv", "amic_contacts.csv", { bom: true }); }
-function exportSelected() { table.download("csv", "amic_contacts_selected.csv", { bom: true }, "selected"); }
+// ---------------------------------------------------------------- export menu
+// Scope = selected rows if any, else everything currently in the grid (WYSIWYG,
+// and works for saved lists too). The server fetches those contact_ids exactly.
+function exportScopeIds() {
+  const sel = table ? table.getSelectedData() : [];
+  const rows = sel.length ? sel : (table ? table.getData() : []);
+  return rows.map((r) => r.contact_id);
+}
+function exportBody() {
+  return {
+    contact_ids: exportScopeIds(),
+    require_email: $("optRequireEmail").checked,
+    dedupe_email: $("optDedupeEmail").checked,
+  };
+}
+async function postDownload(url, filename) {
+  const body = exportBody();
+  if (!body.contact_ids.length) { flash("Nothing to export", true); return; }
+  const res = await fetch(url, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (res.status === 401) { window.location = "/login"; return; }
+  if (!res.ok) { flash("Export failed", true); return; }
+  const blob = await res.blob();
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+}
+async function exportBcc() {
+  const body = exportBody();
+  if (!body.contact_ids.length) { flash("Nothing to export", true); return; }
+  const res = await fetch("/api/export/bcc", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (res.status === 401) { window.location = "/login"; return; }
+  const d = await res.json();
+  if (!d.count) { flash("No emails to copy", true); return; }
+  try { await navigator.clipboard.writeText(d.emails); flash(`Copied ${d.count} addresses`); }
+  catch (e) { window.prompt(`${d.count} addresses — copy below:`, d.emails); }
+}
+function doExport(fmt) {
+  toggleExportPanel(false);
+  if (fmt === "xlsx") postDownload("/api/export.xlsx", "amic_invitees.xlsx");
+  else if (fmt === "outlook") postDownload("/api/export/outlook.csv", "amic_outlook_contacts.csv");
+  else if (fmt === "csv") postDownload("/api/export.csv", "amic_contacts.csv");
+  else if (fmt === "bcc") exportBcc();
+}
+function toggleExportPanel(show) {
+  const p = $("exportPanel");
+  const open = show != null ? show : p.hidden;
+  p.hidden = !open;
+  if (open) {
+    const n = (table ? table.getSelectedData() : []).length;
+    const tot = (table ? table.getData() : []).length;
+    $("exportScope").textContent = n ? `· ${n} selected` : `· all ${tot}`;
+  }
+}
+
+// ---------------------------------------------------------------- find emails
+async function findEmails() {
+  const ids = selectedIds();
+  if (!ids.length) { flash("Select contacts first", true); return; }
+  if (!confirm(`Search for missing emails on ${ids.length} selected contact(s)?\n` +
+               `Only contacts without an email are looked up. This can take a moment.`)) return;
+  $("findEmailBtn").setAttribute("aria-busy", "true");
+  $("status").textContent = "Finding emails…";
+  try {
+    const { job } = await api("/api/email/find", { contact_ids: ids });
+    pollEmailJob(job);
+  } catch (e) {
+    flash(e.message, true);
+    $("findEmailBtn").removeAttribute("aria-busy");
+  }
+}
+async function pollEmailJob(job) {
+  const res = await fetch("/api/jobs/" + job);
+  if (res.status === 401) { window.location = "/login"; return; }
+  const j = await res.json();
+  if (j.message) $("status").textContent = j.message;
+  if (j.status === "running") { setTimeout(() => pollEmailJob(job), 700); return; }
+  $("findEmailBtn").removeAttribute("aria-busy");
+  if (j.status === "error") { flash(j.error || "Email search failed", true); return; }
+  const r = j.result || {};
+  flash(`Found ${r.found} of ${r.checked} email${r.checked === 1 ? "" : "s"}`);
+  // Refresh from the DB so the new (status: check) emails show in the grid.
+  if (currentListId != null) openList(currentListId); else search();
+}
 
 // ---------------------------------------------------------------- meta / init
 function addOptions(sel, values) {
@@ -322,8 +412,12 @@ function init() {
   loadMeta();
   $("searchForm").addEventListener("submit", (e) => { e.preventDefault(); search(); });
   $("resetBtn").addEventListener("click", resetFilters);
-  $("exportAllBtn").addEventListener("click", exportAll);
-  $("exportSelBtn").addEventListener("click", exportSelected);
+  $("findEmailBtn").addEventListener("click", findEmails);
+
+  // export menu
+  $("exportBtn").addEventListener("click", (e) => { e.stopPropagation(); toggleExportPanel(); });
+  $("exportPanel").querySelectorAll(".export-fmt").forEach((b) =>
+    b.addEventListener("click", () => doExport(b.dataset.fmt)));
 
   // saved lists
   $("listsBtn").addEventListener("click", (e) => { e.stopPropagation(); toggleListsPanel(); });
@@ -340,7 +434,9 @@ function init() {
   $("deleteListBtn").addEventListener("click", deleteList);
   $("backBtn").addEventListener("click", backToSearch);
   document.addEventListener("click", (e) => {
-    if (!$("listsPanel").hidden && !e.target.closest(".lists-menu")) toggleListsPanel(false);
+    if (e.target.closest(".lists-menu")) return;  // click inside either menu
+    if (!$("listsPanel").hidden) toggleListsPanel(false);
+    if (!$("exportPanel").hidden) toggleExportPanel(false);
   });
 }
 

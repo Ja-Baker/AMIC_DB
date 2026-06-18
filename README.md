@@ -29,6 +29,7 @@ railway.json         Railway build/deploy config (uses the Dockerfile)
 | `APP_PASSWORD` | The password your client types to enter. |
 | `SECRET_KEY`   | Random string to sign the login cookie. Generate with `openssl rand -hex 32`. |
 | `PORT`         | Set automatically by Railway — do not set it yourself. |
+| `HUNTER_API_KEY` | *(optional)* Hunter.io key for the email-finder's API arm. Leave unset to run the free local pattern-guess only. |
 
 ## Deploy to Railway
 
@@ -82,3 +83,43 @@ set -a; . ./.env; set +a
   reusable outreach list. Reopen a list any time to view/export it, add or remove the
   current selection, rename it, or delete it. Lists persist in the database
   (`contact_lists` / `contact_list_members`).
+
+## Bulk import (`/import`)
+
+A 4-step wizard (top-bar **↥ Import contacts**) for loading large batches:
+
+1. **Upload** a CSV or `.xlsx` (parsed in the browser — nothing is saved yet).
+2. **Map columns** — headers are auto-matched to fields; fix any and set a
+   batch/source label that gets stamped onto every imported contact's `source_lists`.
+3. **Review** — the server flags new vs. likely-duplicate rows (matched by email, or
+   name + organization). Choose **skip dupes / merge blanks / import everything**.
+4. **Import** — rows are written to `contacts` with fresh `C####` ids and **embedded
+   server-side** (the app's in-memory bge-base model), so new contacts are searchable
+   immediately. Progress streams via a background job. Merges are logged to `merge_log`.
+
+## Find missing emails
+
+Select contacts with no email → **✉ Find emails**. For each, the finder pulls the
+company domain from the linked org's website and resolves a best-guess address:
+Hunter.io when `HUNTER_API_KEY` is set (returns a confidence score), otherwise a
+local pattern guess (`first.last@domain`, etc.). Results are written with
+`email_status = 'check'` and provenance (`email_source`, `email_confidence`) so they
+are flagged for a human to confirm before a send — they never masquerade as verified.
+
+(SMTP address verification is intentionally not used: Railway, like most hosts,
+blocks outbound port 25, so it could never run in production. Set `HUNTER_API_KEY`
+for verified results; without it the finder still gives confirm-before-send guesses.)
+
+## Export formats (Microsoft-friendly)
+
+The **⬇ Export** menu exports the selected rows (or the whole result set), with
+toggles for *only-with-email* and *dedupe addresses*:
+
+- **Outlook mail-merge (Excel)** — First/Last, a ready **Greeting** column, Email, Org,
+  Title, Location; one row per person. Drops into Word/Outlook mail merge.
+- **Outlook contacts (CSV)** — the exact headers Outlook's *Import Contacts* expects.
+- **Plain CSV** — all columns, general use.
+- **Copy BCC list** — semicolon-joined addresses for a quick small send.
+
+> Exchange Online caps ~500 recipients/message and ~10k/day — for multi-thousand
+> event blasts use the mail-merge sheet (sends individually), not one big BCC.

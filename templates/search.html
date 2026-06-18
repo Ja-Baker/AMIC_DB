@@ -10,7 +10,7 @@
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/tom-select@2.3.1/dist/css/tom-select.min.css">
   <link rel="stylesheet" href="https://unpkg.com/tabulator-tables@6.3.1/dist/css/tabulator.min.css">
-  <link rel="stylesheet" href="/static/style.css?v=2">
+  <link rel="stylesheet" href="/static/style.css?v=3">
 </head>
 <body>
   <header class="topbar">
@@ -18,7 +18,10 @@
       <img src="/static/img/amic-logo-white.png?v=2" alt="AMIC STL">
       <span class="brand-sub">Contact Search</span>
     </a>
-    <a class="logout" href="/logout">Sign out</a>
+    <div class="topbar-links">
+      <a class="nav-link" href="/import">↥ Import contacts</a>
+      <a class="logout" href="/logout">Sign out</a>
+    </div>
   </header>
 
   <main class="layout" x-data="{ adv:false, sw:0.7 }">
@@ -82,6 +85,7 @@
         <span id="status" class="status">Enter a search to begin.</span>
         <div class="results-actions">
           <span id="selCount" class="sel-count" hidden></span>
+          <button type="button" id="findEmailBtn" class="btn-ghost" hidden>✉ Find emails</button>
           <div class="lists-menu">
             <button type="button" id="listsBtn" class="btn-ghost">★ Lists</button>
             <div id="listsPanel" class="lists-panel" hidden>
@@ -90,8 +94,30 @@
               <button type="button" id="newListBtn" class="btn-primary block-btn">+ New list from selection</button>
             </div>
           </div>
-          <button type="button" id="exportSelBtn" class="btn-ghost" hidden>Export selected</button>
-          <button type="button" id="exportAllBtn" class="btn-outline">Export CSV</button>
+          <div class="lists-menu">
+            <button type="button" id="exportBtn" class="btn-outline">⬇ Export ▾</button>
+            <div id="exportPanel" class="lists-panel export-panel" hidden>
+              <div class="lists-head">Export <span id="exportScope" class="muted"></span></div>
+              <label class="switch sm-switch"><input type="checkbox" id="optRequireEmail" checked>
+                <span>Only contacts with an email</span></label>
+              <label class="switch sm-switch"><input type="checkbox" id="optDedupeEmail" checked>
+                <span>Remove duplicate addresses</span></label>
+              <div class="export-opts">
+                <button type="button" class="export-fmt" data-fmt="xlsx">
+                  <strong>Outlook mail-merge (Excel)</strong>
+                  <span class="muted sm">Greeting + name + email, one row per person</span></button>
+                <button type="button" class="export-fmt" data-fmt="outlook">
+                  <strong>Outlook contacts (CSV)</strong>
+                  <span class="muted sm">Import straight into an Outlook address book</span></button>
+                <button type="button" class="export-fmt" data-fmt="csv">
+                  <strong>Plain CSV</strong>
+                  <span class="muted sm">All columns, for Excel / general use</span></button>
+                <button type="button" class="export-fmt" data-fmt="bcc">
+                  <strong>Copy BCC list</strong>
+                  <span class="muted sm">Semicolon-joined addresses for a quick send</span></button>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -114,6 +140,6 @@
   <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.1/dist/cdn.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/tom-select@2.3.1/dist/js/tom-select.complete.min.js"></script>
   <script src="https://unpkg.com/tabulator-tables@6.3.1/dist/js/tabulator.min.js"></script>
-  <script src="/static/app.js?v=2"></script>
+  <script src="/static/app.js?v=3"></script>
 </body>
 </html>

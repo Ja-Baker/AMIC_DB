@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Import Contacts — AMIC</title>
+  <link rel="icon" type="image/png" href="/static/img/amic-logo-color.png?v=2">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap">
+  <link rel="stylesheet" href="/static/style.css?v=3">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/">
+      <img src="/static/img/amic-logo-white.png?v=2" alt="AMIC STL">
+      <span class="brand-sub">Import Contacts</span>
+    </a>
+    <div class="topbar-links">
+      <a class="logout" href="/">← Back to search</a>
+      <a class="logout" href="/logout">Sign out</a>
+    </div>
+  </header>
+
+  <main class="import-wrap">
+    <!-- Step rail -->
+    <ol class="steps" id="steps">
+      <li class="step active" data-step="1"><span>1</span> Upload</li>
+      <li class="step" data-step="2"><span>2</span> Map columns</li>
+      <li class="step" data-step="3"><span>3</span> Review</li>
+      <li class="step" data-step="4"><span>4</span> Import</li>
+    </ol>
+
+    <!-- STEP 1 — upload -->
+    <section class="card step-panel" id="panel-1">
+      <h2>Upload a contact file</h2>
+      <p class="muted">CSV or Excel (.xlsx). The first row must be column headers
+        (name, email, organization, …). Everything is processed in your browser
+        first — nothing is saved until you confirm.</p>
+      <div id="drop" class="dropzone">
+        <input type="file" id="file" accept=".csv,.xlsx,.xls" hidden>
+        <div class="drop-inner">
+          <strong>Drop your file here</strong>
+          <span class="muted">or <button type="button" id="browseBtn" class="link-btn">browse</button></span>
+          <span id="fileName" class="muted sm"></span>
+        </div>
+      </div>
+    </section>
+
+    <!-- STEP 2 — map columns -->
+    <section class="card step-panel" id="panel-2" hidden>
+      <h2>Map your columns</h2>
+      <p class="muted">We guessed the matches below. Fix any that are wrong; set a
+        column to <em>— skip —</em> to ignore it. <strong>Full name</strong> (or
+        first + last) is required.</p>
+      <div class="map-grid" id="mapGrid"></div>
+      <label class="field tall">
+        <span>Batch / source label <small>(added to every imported contact's Source list — e.g. "Spring 2026 Expo")</small></span>
+        <input type="text" id="sourceLabel" placeholder="e.g. Manufacturing Expo 2026">
+      </label>
+      <div class="card-actions">
+        <button type="button" class="btn-ghost" data-back="1">← Back</button>
+        <button type="button" id="toReviewBtn" class="btn-primary">Review duplicates →</button>
+      </div>
+    </section>
+
+    <!-- STEP 3 — review -->
+    <section class="card step-panel" id="panel-3" hidden>
+      <h2>Review before importing</h2>
+      <div class="stat-row" id="statRow"></div>
+      <div class="policy">
+        <span class="policy-label">How should likely duplicates be handled?</span>
+        <label class="radio"><input type="radio" name="policy" value="skip" checked>
+          <span><strong>Skip duplicates</strong> — import only new contacts (safest)</span></label>
+        <label class="radio"><input type="radio" name="policy" value="merge">
+          <span><strong>Merge</strong> — fill blank fields on existing contacts, add new ones</span></label>
+        <label class="radio"><input type="radio" name="policy" value="all">
+          <span><strong>Import everything</strong> — add all rows, even duplicates</span></label>
+      </div>
+      <div class="preview-table-wrap">
+        <table class="preview-table" id="previewTable"></table>
+      </div>
+      <div class="card-actions">
+        <button type="button" class="btn-ghost" data-back="2">← Back</button>
+        <button type="button" id="importBtn" class="btn-primary">Import to database →</button>
+      </div>
+    </section>
+
+    <!-- STEP 4 — import / done -->
+    <section class="card step-panel" id="panel-4" hidden>
+      <h2 id="doneHead">Importing…</h2>
+      <div class="progress"><div class="progress-bar" id="progBar"></div></div>
+      <p class="muted" id="progMsg">Starting…</p>
+      <div id="summary" class="summary" hidden></div>
+      <div class="card-actions" id="doneActions" hidden>
+        <a href="/" class="btn-primary">Go to search</a>
+        <button type="button" class="btn-ghost" id="anotherBtn">Import another file</button>
+      </div>
+    </section>
+  </main>
+
+  <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+  <script src="/static/import.js?v=3"></script>
+</body>
+</html>
