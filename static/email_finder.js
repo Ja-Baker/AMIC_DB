@@ -158,8 +158,18 @@ async function pollJob(job) {
   $("findBtn").removeAttribute("aria-busy");
   if (j.status === "error") { flash(j.error || "Find failed", true); return; }
   const r = j.result || {};
-  flash(`Found ${r.found} email${r.found === 1 ? "" : "s"} (${r.skipped_low || 0} below threshold, ${r.no_match || 0} no match)`);
-  search(); // refresh grid from DB so the new emails + scores show
+  // Patch found rows IN PLACE (don't re-run the missing-only search, which would
+  // hide the rows that just got an email). Saved values come straight from the DB.
+  const found = (r.details || []).filter((d) => d.email);
+  if (found.length && table) {
+    table.updateData(found.map((d) => ({
+      contact_id: d.contact_id, email: d.email, email_status: "check",
+      email_confidence: d.confidence, email_source: d.source,
+    })));
+  }
+  $("status").textContent =
+    `✓ Found ${r.found} · ${r.skipped_low || 0} below threshold · ${r.no_match || 0} no match · ${r.checked} checked`;
+  flash(`Saved ${r.found} email${r.found === 1 ? "" : "s"} to the database`);
 }
 
 async function applyAction(action) {
@@ -169,9 +179,21 @@ async function applyAction(action) {
   if (!confirm(`${verb} ${ids.length} contact(s)?`)) return;
   try {
     const r = await api("/api/email/apply", { contact_ids: ids, action });
+    if (table) {
+      if (action === "accept")
+        table.updateData(ids.map((id) => ({ contact_id: id, email_status: "valid format" })));
+      else
+        table.updateData(ids.map((id) => ({ contact_id: id, email: null,
+          email_status: "missing", email_confidence: null, email_source: null })));
+      table.deselectRow();
+    }
     flash(`${action === "accept" ? "Accepted" : "Cleared"} ${r.updated}`);
-    search();
   } catch (e) { flash(e.message, true); }
+}
+
+function clearResults() {
+  if (table) table.clearData();
+  $("status").textContent = "Cleared. Search to load contacts, then find emails.";
 }
 
 // ---------------------------------------------------------------- toast
@@ -219,6 +241,7 @@ function init() {
   $("findBtn").addEventListener("click", findEmails);
   $("acceptBtn").addEventListener("click", () => applyAction("accept"));
   $("clearBtn").addEventListener("click", () => applyAction("clear"));
+  $("clearResultsBtn").addEventListener("click", clearResults);
 }
 
 if (document.readyState !== "loading") init();
