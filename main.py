@@ -267,8 +267,9 @@ async def api_search(request: Request):
     if not _authed(request):
         return JSONResponse({"error": "unauthorized"}, status_code=401)
     body = await request.json()
+    # No result cap — return every match ("Max results" control removed from UI).
     rows = _run_search(**_search_args(body),
-                       limit=min(int(body.get("limit", 50)), 200))
+                       limit=int(body.get("limit") or 1_000_000))
     return {"count": len(rows), "results": rows}
 
 

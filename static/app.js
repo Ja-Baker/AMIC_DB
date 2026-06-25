@@ -28,7 +28,6 @@ function gatherParams() {
     poc: singleVal("poc"),
     include_dnc: $("include_dnc").checked,
     semantic_weight: parseFloat($("semantic_weight").value),
-    limit: parseInt($("limit").value, 10) || 50,
   };
 }
 
@@ -164,7 +163,6 @@ function resetFilters() {
   ts.tags && ts.tags.clear();
   $("include_dnc").checked = false;
   $("semantic_weight").value = 0.7;
-  $("limit").value = 50;
   table.clearData();
   $("status").textContent = "Enter a search to begin.";
 }
