@@ -948,3 +948,57 @@ async def api_export_bcc(request: Request):
     rows = _export_rows(body)
     emails = [r["email"].strip() for r in rows if (r.get("email") or "").strip()]
     return {"count": len(emails), "emails": "; ".join(emails)}
+
+
+def _sheet_from_query(ws, headers, cur, sql):
+    """Write a header row + every result row; arrays become '; '-joined strings."""
+    ws.append(headers)
+    cur.execute(sql)
+    for row in cur.fetchall():
+        ws.append(["; ".join(map(str, v)) if isinstance(v, list) else v for v in row])
+    ws.freeze_panes = "A2"
+
+
+@app.get("/api/export/database.xlsx")
+def api_export_database(request: Request):
+    """Download the entire database as the familiar multi-tab workbook (live snapshot)."""
+    if not _authed(request):
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    wb = Workbook()
+    with _pool.connection() as conn, conn.cursor() as cur:
+        ws = wb.active
+        ws.title = "Contacts"
+        _sheet_from_query(ws,
+            ["contact_id", "last_name", "first_name", "organization", "title",
+             "full_name", "org_id", "email", "email_status", "phone", "linkedin",
+             "city", "state", "location_raw", "tags", "source_lists", "POC",
+             "do_not_contact", "last_contacted", "notes", "needs_review"], cur,
+            """select contact_id, last_name, first_name, organization, title, full_name,
+                      org_id, email, email_status, phone, linkedin, city, state,
+                      location_raw, tags, source_lists, poc, do_not_contact,
+                      last_contacted, notes, needs_review
+               from contacts order by (substring(contact_id from 2))::int""")
+        _sheet_from_query(wb.create_sheet("Organizations"),
+            ["org_id", "name", "category", "website", "email", "phone", "address",
+             "city", "state", "zip", "employees_local", "employees_companywide",
+             "source_lists", "notes"], cur,
+            """select org_id, name, category, website, email, phone, address, city,
+                      state, zip, employees_local, employees_companywide, source_lists, notes
+               from organizations order by org_id""")
+        _sheet_from_query(wb.create_sheet("Memberships"),
+            ["contact_id", "full_name", "source_file", "list_category",
+             "email_as_listed", "org_as_listed"], cur,
+            """select m.contact_id, c.full_name, m.source_file, m.list_category,
+                      m.email_as_listed, m.org_as_listed
+               from memberships m left join contacts c on c.contact_id = m.contact_id
+               order by m.contact_id""")
+        _sheet_from_query(wb.create_sheet("Merge Log"),
+            ["contact_id", "full_name", "rows_merged", "sources", "original_rows"], cur,
+            """select contact_id, full_name, rows_merged, sources, original_rows
+               from merge_log order by contact_id""")
+    buf = io.BytesIO()
+    wb.save(buf)
+    return Response(
+        content=buf.getvalue(),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=Contact Database.xlsx"})

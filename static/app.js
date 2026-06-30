@@ -198,6 +198,19 @@ async function postDownload(url, filename) {
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(a.href), 4000);
 }
+// Full database — a live snapshot of every contact; ignores the current selection.
+async function downloadDatabase() {
+  flash("Building database workbook…");
+  const res = await fetch("/api/export/database.xlsx");
+  if (res.status === 401) { window.location = "/login"; return; }
+  if (!res.ok) { flash("Download failed", true); return; }
+  const blob = await res.blob();
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "Contact Database.xlsx";
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+}
 async function exportBcc() {
   const body = exportBody();
   if (!body.contact_ids.length) { flash("Nothing to export", true); return; }
@@ -213,7 +226,8 @@ async function exportBcc() {
 }
 function doExport(fmt) {
   toggleExportPanel(false);
-  if (fmt === "xlsx") postDownload("/api/export.xlsx", "amic_invitees.xlsx");
+  if (fmt === "database") downloadDatabase();
+  else if (fmt === "xlsx") postDownload("/api/export.xlsx", "amic_invitees.xlsx");
   else if (fmt === "outlook") postDownload("/api/export/outlook.csv", "amic_outlook_contacts.csv");
   else if (fmt === "csv") postDownload("/api/export.csv", "amic_contacts.csv");
   else if (fmt === "bcc") exportBcc();

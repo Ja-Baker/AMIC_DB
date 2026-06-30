@@ -259,6 +259,9 @@ a.email:hover { text-decoration: underline; }
 }
 .export-fmt:hover { background: #f6f4fd; border-color: var(--navy, #1e1545); }
 .export-fmt strong { color: var(--navy, #1e1545); font-size: 13.5px; }
+.export-fmt.whole-db { background: #fdeef2; border-color: var(--crimson, #e8194f); margin-bottom: 10px; }
+.export-fmt.whole-db:hover { background: #fbe0e8; }
+.export-fmt.whole-db strong { color: var(--crimson, #e8194f); }
 
 /* ---------------------------------------------------------------- import wizard */
 .import-wrap { max-width: 880px; margin: 26px auto; padding: 0 22px; }
