@@ -500,6 +500,98 @@ def _classify(row: dict, by_email: dict, by_nameorg: dict):
     return "new", None, None
 
 
+# ---- smart parser for pasted "asinine" lists -----------------------------
+# Turns raw text copied straight out of an email into IMPORT_FIELDS rows that
+# flow through the same preview/commit/embed pipeline as an uploaded file.
+_EMAIL_FIND = re.compile(r"[^@\s<>;,()]+@[^@\s<>;,()]+\.[^@\s<>;,()]+")
+_LINE_SEP = re.compile(r"\s+[–—|]\s+|\s+-\s+|\t+")
+_GENERIC_DOMAINS = {"gmail.com", "yahoo.com", "outlook.com", "hotmail.com",
+                    "aol.com", "icloud.com", "me.com", "msn.com", "live.com",
+                    "comcast.net", "sbcglobal.net", "att.net", "verizon.net"}
+
+
+def _split_name(name: str):
+    """'Last, First' or 'First Last' -> (first, last)."""
+    name = re.sub(r"\s+", " ", (name or "").strip()).strip('"').strip()
+    if not name:
+        return None, None
+    if "," in name:
+        last, _, first = name.partition(",")
+        return (first.strip() or None), (last.strip() or None)
+    parts = name.split(" ")
+    if len(parts) == 1:
+        return parts[0], None
+    return parts[0], " ".join(parts[1:])
+
+
+def _org_from_domain(email: str | None):
+    """Honest placeholder org from the email domain (user can rename in review)."""
+    if not email or "@" not in email:
+        return None
+    dom = email.split("@", 1)[1].lower().strip()
+    if not dom or dom in _GENERIC_DOMAINS:
+        return None
+    return dom
+
+
+def _parse_pasted(text: str, derive_org: bool = False) -> list[dict]:
+    text = text or ""
+    rows: list[dict] = []
+    if _EMAIL_FIND.search(text):
+        # Address-blob mode: Outlook-style "Name <email>; …" or bare emails,
+        # separated by ';' or newlines.
+        for chunk in re.split(r"[;\n]+", text):
+            chunk = chunk.strip().strip(",").strip()
+            if not chunk:
+                continue
+            m = re.match(r'^(.*?)<\s*([^<>\s]+@[^<>\s]+)\s*>\s*$', chunk)
+            if m:
+                name, email = m.group(1), m.group(2)
+            else:
+                em = _EMAIL_FIND.search(chunk)
+                if not em:
+                    name, email = chunk, None
+                elif em.group(0) == chunk:
+                    name, email = "", chunk
+                else:                       # "Name email" with no brackets
+                    email = em.group(0)
+                    name = chunk.replace(email, "").strip(' <>"\t')
+            first, last = _split_name(name) if name else (None, None)
+            full = " ".join(x for x in [first, last] if x) or (email or None)
+            if not full:
+                continue
+            rows.append({"full_name": full, "first_name": first, "last_name": last,
+                         "email": email,
+                         "organization": _org_from_domain(email) if derive_org else None})
+    else:
+        # Line-list mode: one entry per line, "Name – Organization".
+        for line in text.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            parts = _LINE_SEP.split(line, maxsplit=1)
+            name = parts[0].strip()
+            org = parts[1].strip() if len(parts) > 1 else None
+            first, last = _split_name(name)
+            full = " ".join(x for x in [first, last] if x) or name or None
+            if not full:
+                continue
+            rows.append({"full_name": full, "first_name": first, "last_name": last,
+                         "organization": org})
+    return rows
+
+
+@app.post("/api/import/parse")
+async def api_import_parse(request: Request):
+    """Structure raw pasted text into importable rows (no DB writes)."""
+    if not _authed(request):
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    body = await request.json()
+    rows = _parse_pasted(body.get("text") or "", bool(body.get("derive_org")))
+    mode = "address-blob" if any(r.get("email") for r in rows) else "name-org"
+    return {"rows": rows, "count": len(rows), "mode": mode}
+
+
 @app.post("/api/import/preview")
 async def api_import_preview(request: Request):
     """Classify incoming rows as new vs. likely-duplicate without writing anything."""

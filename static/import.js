@@ -117,6 +117,55 @@ function buildMappedRows() {
   });
 }
 
+// Add a batch tag to every row (merged with any per-row tags; server splits on ";").
+function stampTag(rows, tag) {
+  tag = (tag || "").trim();
+  if (!tag) return rows;
+  return rows.map((r) => {
+    const t = (r.tags || "").trim();
+    return { ...r, tags: t ? t + "; " + tag : tag };
+  });
+}
+
+async function preview(rows) {
+  const res = await fetch("/api/import/preview", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ rows }),
+  });
+  if (res.status === 401) { window.location = "/login"; return null; }
+  return res.json();
+}
+
+// ---------------------------------------------------------------- paste flow
+async function parseList() {
+  const text = $("pasteText").value;
+  if (!text.trim()) { alert("Paste a list first."); return; }
+  $("parseBtn").setAttribute("aria-busy", "true");
+  try {
+    const res = await fetch("/api/import/parse", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text, derive_org: $("pasteDeriveOrg").checked }),
+    });
+    if (res.status === 401) { window.location = "/login"; return; }
+    const data = await res.json();
+    if (!data.rows || !data.rows.length) {
+      alert("Couldn't find any contacts in that text. Try one entry per line.");
+      return;
+    }
+    mappedRows = stampTag(data.rows, $("pasteTag").value);
+    // Reuse the file flow's commit input: it reads #sourceLabel.
+    $("sourceLabel").value = $("pasteSource").value;
+    const pdata = await preview(mappedRows);
+    if (!pdata) return;
+    renderPreview(pdata);
+    goStep(3);
+  } catch (e) {
+    alert("Parse failed: " + e);
+  } finally {
+    $("parseBtn").removeAttribute("aria-busy");
+  }
+}
+
 // ---------------------------------------------------------------- preview
 async function toReview() {
   const fields = new Set(Object.values(mapping).filter(Boolean));
@@ -124,15 +173,11 @@ async function toReview() {
     alert("Map a Full name column, or both First name and Last name.");
     return;
   }
-  mappedRows = buildMappedRows();
+  mappedRows = stampTag(buildMappedRows(), $("batchTag").value);
   $("toReviewBtn").setAttribute("aria-busy", "true");
   try {
-    const res = await fetch("/api/import/preview", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ rows: mappedRows }),
-    });
-    if (res.status === 401) { window.location = "/login"; return; }
-    const data = await res.json();
+    const data = await preview(mappedRows);
+    if (!data) return;
     renderPreview(data);
     goStep(3);
   } catch (e) {
@@ -219,6 +264,16 @@ function init() {
   ["dragleave", "drop"].forEach((ev) =>
     drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.remove("over"); }));
   drop.addEventListener("drop", (e) => e.dataTransfer.files[0] && handleFile(e.dataTransfer.files[0]));
+
+  // mode tabs (file vs paste)
+  document.querySelectorAll(".imp-tab").forEach((t) =>
+    t.addEventListener("click", () => {
+      document.querySelectorAll(".imp-tab").forEach((x) =>
+        x.classList.toggle("active", x === t));
+      $("mode-file").hidden = t.dataset.mode !== "file";
+      $("mode-paste").hidden = t.dataset.mode !== "paste";
+    }));
+  $("parseBtn").addEventListener("click", parseList);
 
   $("toReviewBtn").addEventListener("click", toReview);
   $("importBtn").addEventListener("click", runImport);

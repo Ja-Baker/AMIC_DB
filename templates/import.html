@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap">
-  <link rel="stylesheet" href="/static/style.css?v=5">
+  <link rel="stylesheet" href="/static/style.css?v=6">
 </head>
 <body>
   <header class="topbar">
@@ -33,18 +33,55 @@
       <li class="step" data-step="4"><span>4</span> Import</li>
     </ol>
 
-    <!-- STEP 1 — upload -->
+    <!-- STEP 1 — upload / paste -->
     <section class="card step-panel" id="panel-1">
-      <h2>Upload a contact file</h2>
-      <p class="muted">CSV or Excel (.xlsx). The first row must be column headers
-        (name, email, organization, …). Everything is processed in your browser
-        first — nothing is saved until you confirm.</p>
-      <div id="drop" class="dropzone">
-        <input type="file" id="file" accept=".csv,.xlsx,.xls" hidden>
-        <div class="drop-inner">
-          <strong>Drop your file here</strong>
-          <span class="muted">or <button type="button" id="browseBtn" class="link-btn">browse</button></span>
-          <span id="fileName" class="muted sm"></span>
+      <div class="import-tabs">
+        <button type="button" class="imp-tab active" data-mode="file">Upload a file</button>
+        <button type="button" class="imp-tab" data-mode="paste">Paste a list</button>
+      </div>
+
+      <div id="mode-file">
+        <h2>Upload a contact file</h2>
+        <p class="muted">CSV or Excel (.xlsx). The first row must be column headers
+          (name, email, organization, …). Everything is processed in your browser
+          first — nothing is saved until you confirm.</p>
+        <div id="drop" class="dropzone">
+          <input type="file" id="file" accept=".csv,.xlsx,.xls" hidden>
+          <div class="drop-inner">
+            <strong>Drop your file here</strong>
+            <span class="muted">or <button type="button" id="browseBtn" class="link-btn">browse</button></span>
+            <span id="fileName" class="muted sm"></span>
+          </div>
+        </div>
+      </div>
+
+      <div id="mode-paste" hidden>
+        <h2>Paste a messy list</h2>
+        <p class="muted">Paste straight from an email — no cleanup needed. Works with
+          Outlook address blobs like <code>Jane Doe &lt;jane@acme.com&gt;; Smith, Bob &lt;…&gt;</code>
+          or one-per-line lists like <code>Jane Doe – Acme Corp</code>. We'll figure
+          out the structure; nothing is saved until you confirm.</p>
+        <textarea id="pasteText" class="paste-box" rows="9"
+          placeholder="Bob Miller &lt;rmiller2@ameren.com&gt;; Bryant, Brandon &lt;BBryant@stlouiscountymo.gov&gt;
+— or —
+Jesolyn Larry – Riverview
+Megan Brown – Valley Park"></textarea>
+        <div class="paste-opts">
+          <label class="field">
+            <span>Tag <small>(added to every contact — e.g. "K-12")</small></span>
+            <input type="text" id="pasteTag" placeholder="e.g. K-12">
+          </label>
+          <label class="field">
+            <span>Source label <small>(where this list came from)</small></span>
+            <input type="text" id="pasteSource" placeholder="e.g. PLTW list – Dec 2025">
+          </label>
+        </div>
+        <label class="check">
+          <input type="checkbox" id="pasteDeriveOrg">
+          <span>Guess organization from the email domain</span>
+        </label>
+        <div class="card-actions">
+          <button type="button" id="parseBtn" class="btn-primary">Parse list →</button>
         </div>
       </div>
     </section>
@@ -59,6 +96,10 @@
       <label class="field tall">
         <span>Batch / source label <small>(added to every imported contact's Source list — e.g. "Spring 2026 Expo")</small></span>
         <input type="text" id="sourceLabel" placeholder="e.g. Manufacturing Expo 2026">
+      </label>
+      <label class="field tall">
+        <span>Tag <small>(optional — added to every imported contact, e.g. "K-12")</small></span>
+        <input type="text" id="batchTag" placeholder="e.g. K-12">
       </label>
       <div class="card-actions">
         <button type="button" class="btn-ghost" data-back="1">← Back</button>
@@ -102,6 +143,6 @@
   </main>
 
   <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
-  <script src="/static/import.js?v=4"></script>
+  <script src="/static/import.js?v=5"></script>
 </body>
 </html>

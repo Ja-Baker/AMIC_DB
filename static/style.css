@@ -287,6 +287,24 @@ a.email:hover { text-decoration: underline; }
 .drop-inner strong { font-size: 17px; color: var(--navy, #1e1545); }
 .drop-inner button { pointer-events: auto; }
 
+/* import: file vs paste tabs + paste box */
+.import-tabs { display: flex; gap: 4px; margin: -4px 0 18px; border-bottom: 1px solid var(--line, #e7e5ef); }
+.imp-tab { background: none; border: none; padding: 10px 16px; font-size: 14px; font-weight: 600;
+  color: var(--muted, #6f6c84); cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+.imp-tab:hover { color: var(--ink, #1c1930); }
+.imp-tab.active { color: var(--crimson, #e8194f); border-bottom-color: var(--crimson, #e8194f); }
+.paste-box { width: 100%; box-sizing: border-box; padding: 12px 14px; border: 1px solid var(--line, #e7e5ef);
+  border-radius: 10px; background: #fff; font: inherit; font-size: 14px; resize: vertical; line-height: 1.5; }
+.paste-box:focus { outline: none; border-color: var(--crimson, #e8194f); }
+.paste-opts { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin: 14px 0 10px; }
+.paste-opts .field { margin: 0; }
+.paste-opts .field > span { display: block; font-size: 12px; font-weight: 700; margin-bottom: 6px; }
+.paste-opts .field small { font-weight: 400; color: var(--muted, #6f6c84); }
+.paste-opts input { width: 100%; box-sizing: border-box; padding: 9px 11px; border: 1px solid var(--line, #e7e5ef); border-radius: 8px; }
+.check { display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--ink, #1c1930); cursor: pointer; }
+.check input { width: 16px; height: 16px; accent-color: var(--crimson, #e8194f); }
+p.muted code { background: #ece9f5; padding: 1px 5px; border-radius: 4px; font-size: 12.5px; }
+
 .map-grid { display: flex; flex-direction: column; gap: 8px; max-height: 50vh; overflow-y: auto; padding-right: 4px; }
 .map-row { display: grid; grid-template-columns: 1fr 24px 220px; align-items: center; gap: 10px;
   padding: 8px; border: 1px solid var(--line, #e7e5ef); border-radius: 10px; }
